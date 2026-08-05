@@ -1,0 +1,19 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+# pydantic-core 2.27.2 (required by pydantic==2.10.4) has no pre-built wheel
+# for Python 3.14 and fails to compile from source. Allow any pydantic 2.x
+# so the build tooling (uv) can select the version whose pydantic-core has a
+# Python 3.14 wheel (>=2.11 ships pydantic-core >=2.33 which does).
+# (Same constraint recon-runner uses — kept identical for consistency.)
+pydantic>=2.10.4,<3
+email-validator==2.2.0
+sqlalchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+alembic==1.14.0
+httpx==0.28.1
+pyjwt==2.10.1
+# Not passlib[bcrypt]: passlib 1.7.4 (unmaintained since 2020) reads
+# bcrypt.__about__.__version__, which the bcrypt package removed in 4.1 —
+# breaks on every current bcrypt release. Calling bcrypt directly avoids
+# depending on an abandoned compatibility shim.
+bcrypt==4.2.1

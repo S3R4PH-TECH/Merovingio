@@ -1,0 +1,321 @@
+# Merovíngio — MVP vertical PoC stack.
+#
+# Local-only tool for the purple team (see CONTEXT.md/NEXT_STEPS.md) — not
+# intended for exposure to third parties or as a hosted service.
+#
+# `name:` is set explicitly so container/volume/network names stay stable
+# regardless of the directory this is checked out into or run from.
+#
+# Scope (see ARCHITECTURE_AND_ROADMAP.md, "Próximos Passos Imediatos" #3):
+# prove the n8n -> Gateway -> Tool Execution Service lease/callback pattern
+# end-to-end using the TES that already exists (recon-runner), before
+# building out the full production docker-compose skeleton (3-network
+# segmentation, traefik, opensearch, secrets files — DevOps section 9,
+# Fase v1). This is deliberately a smaller, single-network version of that
+# skeleton: real enough to prove the pattern, not yet the hardened MVP.
+#
+# Networks:
+#   - control_net: n8n (main+worker), redis, n8n's own postgres, the
+#     platform's own postgres, and backend-gateway. Nothing here is
+#     reachable from the host except backend-gateway (for this PoC only —
+#     production puts a reverse proxy in front instead, see DevOps section
+#     C.1 of the roadmap).
+#   - recon_net: EXTERNAL, owned and created by Pentesters-Team (see
+#     Pentesters-Team/docker-compose.yml). We join it, never recreate it —
+#     same convention Workspace/Trinity already follows. n8n-worker needs
+#     it to reach recon-runner directly (workflow nodes call the TES
+#     directly over HTTP after leasing it from the Gateway); n8n-main does
+#     not, since only workers execute workflow nodes.
+name: merovingio
+
+services:
+  redis:
+    container_name: merovingio-redis
+    image: redis:7-alpine
+    networks:
+      - control_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+    restart: unless-stopped
+
+  n8n-postgres:
+    container_name: merovingio-n8n-postgres
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: n8n
+      POSTGRES_USER: n8n
+      POSTGRES_PASSWORD: ${N8N_POSTGRES_PASSWORD:-n8n_dev_password}
+    volumes:
+      - n8n_postgres_data:/var/lib/postgresql/data
+    networks:
+      - control_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U n8n"]
+      interval: 10s
+    restart: unless-stopped
+
+  platform-postgres:
+    container_name: merovingio-platform-postgres
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: gateway
+      POSTGRES_USER: gateway
+      POSTGRES_PASSWORD: ${PLATFORM_POSTGRES_PASSWORD:-gateway_dev_password}
+    volumes:
+      - platform_postgres_data:/var/lib/postgresql/data
+    networks:
+      - control_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gateway"]
+      interval: 10s
+    restart: unless-stopped
+
+  n8n-main:
+    container_name: merovingio-n8n-main
+    image: n8nio/n8n:1.68.0
+    environment:
+      EXECUTIONS_MODE: queue
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: n8n-postgres
+      DB_POSTGRESDB_DATABASE: n8n
+      DB_POSTGRESDB_USER: n8n
+      DB_POSTGRESDB_PASSWORD: ${N8N_POSTGRES_PASSWORD:-n8n_dev_password}
+      QUEUE_BULL_REDIS_HOST: redis
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-dev-only-encryption-key-change-me}
+      N8N_HOST: n8n-main
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: http://n8n-main:5678/
+      N8N_RUNNERS_ENABLED: "true"
+    ports:
+      # Host-exposed ONLY for this PoC (to drive it by hand / inspect the
+      # editor while validating). Production puts this behind the Gateway
+      # only, per the "n8n editor/API never exposed directly" rule
+      # (roadmap, Arquitetura section C).
+      - "15678:5678"
+    depends_on:
+      - n8n-postgres
+      - redis
+    networks:
+      - control_net
+    restart: unless-stopped
+
+  n8n-worker:
+    container_name: merovingio-n8n-worker
+    image: n8nio/n8n:1.68.0
+    command: worker --concurrency=10
+    environment:
+      EXECUTIONS_MODE: queue
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: n8n-postgres
+      DB_POSTGRESDB_DATABASE: n8n
+      DB_POSTGRESDB_USER: n8n
+      DB_POSTGRESDB_PASSWORD: ${N8N_POSTGRES_PASSWORD:-n8n_dev_password}
+      QUEUE_BULL_REDIS_HOST: redis
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-dev-only-encryption-key-change-me}
+    depends_on:
+      - n8n-postgres
+      - redis
+    networks:
+      - control_net
+      - recon_net
+    restart: unless-stopped
+
+  backend-gateway:
+    container_name: merovingio-backend-gateway
+    image: merovingio-backend-gateway
+    build:
+      context: ../..
+      dockerfile: Workspace/Merovingio/backend-gateway/Dockerfile
+    environment:
+      PLATFORM_DATABASE_URL: postgresql+asyncpg://gateway:${PLATFORM_POSTGRES_PASSWORD:-gateway_dev_password}@platform-postgres:5432/gateway
+      GATEWAY_JWT_SECRET: ${GATEWAY_JWT_SECRET:-dev-only-jwt-secret-change-me}
+      GATEWAY_INTERNAL_TOKEN: ${GATEWAY_INTERNAL_TOKEN:-dev-only-internal-token-change-me}
+    ports:
+      # Host-exposed for this PoC only — see n8n-main's port comment above.
+      - "18000:8000"
+    depends_on:
+      - platform-postgres
+    networks:
+      - control_net
+      - recon_net
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  pd-recon:
+    container_name: merovingio-pd-recon
+    image: merovingio-pd-recon
+    build:
+      context: ../..
+      dockerfile: Pentesters-Team/services/pd-recon/Dockerfile
+    environment:
+      PD_RECON_TOKEN: ${PD_RECON_TOKEN:-secret-tok}
+      GATEWAY_INTERNAL_TOKEN: ${GATEWAY_INTERNAL_TOKEN:-dev-only-internal-token-change-me}
+    networks:
+      - control_net
+      - recon_net
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  opensearch:
+    container_name: merovingio-opensearch
+    image: opensearchproject/opensearch:2.18.0
+    environment:
+      - discovery.type=single-node
+      - DISABLE_SECURITY_PLUGIN=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+    volumes:
+      - opensearch_data:/usr/share/opensearch/data
+    networks:
+      - control_net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q -E '(green|yellow)'"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  data-indexer:
+    container_name: merovingio-data-indexer
+    image: merovingio-data-indexer
+    build:
+      context: ../..
+      dockerfile: Workspace/Merovingio/data-indexer/Dockerfile
+    environment:
+      OPENSEARCH_HOST: opensearch
+      OPENSEARCH_PORT: 9200
+    depends_on:
+      - opensearch
+    networks:
+      - control_net
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  minio:
+    container_name: merovingio-minio
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "19000:9000"
+      - "19001:9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - control_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  data-sync-svc:
+    container_name: merovingio-data-sync-svc
+    image: merovingio-data-sync-svc
+    build:
+      context: ../..
+      dockerfile: Workspace/Merovingio/data-sync-svc/Dockerfile
+    environment:
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      NVD_API_KEY: ${NVD_API_KEY:-}
+    depends_on:
+      - minio
+    networks:
+      - control_net
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  pd-vuln:
+    container_name: merovingio-pd-vuln
+    image: merovingio-pd-vuln
+    build:
+      context: ../..
+      dockerfile: Pentesters-Team/services/pd-vuln/Dockerfile
+    environment:
+      PD_VULN_TOKEN: ${PD_VULN_TOKEN:-secret-tok}
+      GATEWAY_INTERNAL_TOKEN: ${GATEWAY_INTERNAL_TOKEN:-dev-only-internal-token-change-me}
+    networks:
+      - control_net
+      - recon_net
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  net-scan:
+    container_name: merovingio-net-scan
+    image: merovingio-net-scan
+    build:
+      context: ../..
+      dockerfile: Pentesters-Team/services/net-scan/Dockerfile
+    environment:
+      NET_SCAN_TOKEN: ${NET_SCAN_TOKEN:-secret-tok}
+      GATEWAY_INTERNAL_TOKEN: ${GATEWAY_INTERNAL_TOKEN:-dev-only-internal-token-change-me}
+    networks:
+      - control_net
+      - recon_net
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  web-utils:
+    container_name: merovingio-web-utils
+    image: merovingio-web-utils
+    build:
+      context: ../..
+      dockerfile: Pentesters-Team/services/web-utils/Dockerfile
+    environment:
+      WEB_UTILS_TOKEN: ${WEB_UTILS_TOKEN:-secret-tok}
+      GATEWAY_INTERNAL_TOKEN: ${GATEWAY_INTERNAL_TOKEN:-dev-only-internal-token-change-me}
+    networks:
+      - control_net
+      - recon_net
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+
+volumes:
+  n8n_postgres_data:
+  platform_postgres_data:
+  opensearch_data:
+  minio_data:
+
+networks:
+  control_net:
+  recon_net:
+    name: recon_net
+    external: true
+
+
+
