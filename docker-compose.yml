@@ -131,6 +131,11 @@ services:
       PLATFORM_DATABASE_URL: postgresql+asyncpg://gateway:${PLATFORM_POSTGRES_PASSWORD:-gateway_dev_password}@platform-postgres:5432/gateway
       GATEWAY_JWT_SECRET: ${GATEWAY_JWT_SECRET:-dev-only-jwt-secret-change-me}
       GATEWAY_INTERNAL_TOKEN: ${GATEWAY_INTERNAL_TOKEN:-dev-only-internal-token-change-me}
+      DATA_INDEXER_TOKEN: ${DATA_INDEXER_TOKEN:-dev-only-indexer-token-change-me}
+      # Self-registration is closed by default in code. This local PoC stack
+      # opens it so the UI's Create account page works; set it to false to
+      # close signup and go back to seeding users with scripts/seed_user.py.
+      GATEWAY_ALLOW_REGISTRATION: ${GATEWAY_ALLOW_REGISTRATION:-true}
     ports:
       # Host-exposed for this PoC only — see n8n-main's port comment above.
       - "18000:8000"
@@ -145,6 +150,20 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    restart: unless-stopped
+
+  frontend:
+    container_name: merovingio-frontend
+    image: merovingio-frontend
+    build:
+      # Self-contained, unlike the Python services that share code across teams.
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      # Host-exposed for this PoC only — see n8n-main's port comment above.
+      - "15173:80"
+    networks:
+      - control_net
     restart: unless-stopped
 
   pd-recon:
@@ -193,6 +212,9 @@ services:
     environment:
       OPENSEARCH_HOST: opensearch
       OPENSEARCH_PORT: 9200
+      # Must match backend-gateway's DATA_INDEXER_TOKEN — the Gateway is the
+      # only caller of /index/*. Without it the indexer rejects every write.
+      DATA_INDEXER_TOKEN: ${DATA_INDEXER_TOKEN:-dev-only-indexer-token-change-me}
     depends_on:
       - opensearch
     networks:
@@ -304,12 +326,114 @@ services:
       retries: 3
     restart: unless-stopped
 
+  # ── NEW TES: pd-scan (Nuclei) ────────────────────────────────────────────
+  #
+  # nuclei-templates-init runs once to clone the templates into the shared
+  # volume. It is a one-shot container (restart: "no") — on subsequent
+  # `docker compose up` it exits immediately because .git already exists.
+  nuclei-templates-init:
+    container_name: merovingio-nuclei-templates-init
+    image: alpine/git
+    volumes:
+      - nuclei_templates:/templates
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "[ -d /templates/.git ] || git clone --depth 1 https://github.com/projectdiscovery/nuclei-templates.git /templates"
+    restart: "no"
+
+  pd-scan:
+    container_name: merovingio-pd-scan
+    image: merovingio-pd-scan
+    build:
+      context: ../..
+      dockerfile: Pentesters-Team/services/pd-scan/Dockerfile
+    environment:
+      PD_SCAN_TOKEN: ${PD_SCAN_TOKEN:-secret-tok}
+      GATEWAY_INTERNAL_TOKEN: ${GATEWAY_INTERNAL_TOKEN:-dev-only-internal-token-change-me}
+      NUCLEI_TEMPLATES_DIR: /root/nuclei-templates
+    volumes:
+      - nuclei_templates:/root/nuclei-templates:ro
+    depends_on:
+      - nuclei-templates-init
+    networks:
+      - control_net
+      - recon_net
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # ── NEW TES: pd-crawler (Katana + GoSpider) ─────────────────────────────
+  pd-crawler:
+    container_name: merovingio-pd-crawler
+    image: merovingio-pd-crawler
+    build:
+      context: ../..
+      dockerfile: Pentesters-Team/services/pd-crawler/Dockerfile
+    environment:
+      PD_CRAWLER_TOKEN: ${PD_CRAWLER_TOKEN:-secret-tok}
+      GATEWAY_INTERNAL_TOKEN: ${GATEWAY_INTERNAL_TOKEN:-dev-only-internal-token-change-me}
+    networks:
+      - control_net
+      - recon_net
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # ── NEW TES: fuzz-svc (ffuf + dirsearch) ────────────────────────────────
+  #
+  # seclists-init clones SecLists with --depth 1 on first run.
+  # Note: SecLists is ~4-6 GB at shallow depth. The init-container only
+  # runs once per volume lifetime.
+  seclists-init:
+    container_name: merovingio-seclists-init
+    image: alpine/git
+    volumes:
+      - seclists_data:/wordlists
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "[ -d /wordlists/.git ] || git clone --depth 1 https://github.com/danielmiessler/SecLists.git /wordlists"
+    restart: "no"
+
+  fuzz-svc:
+    container_name: merovingio-fuzz-svc
+    image: merovingio-fuzz-svc
+    build:
+      context: ../..
+      dockerfile: Pentesters-Team/services/fuzz-svc/Dockerfile
+    environment:
+      FUZZ_SVC_TOKEN: ${FUZZ_SVC_TOKEN:-secret-tok}
+      GATEWAY_INTERNAL_TOKEN: ${GATEWAY_INTERNAL_TOKEN:-dev-only-internal-token-change-me}
+      SECLISTS_DIR: /wordlists
+    volumes:
+      - seclists_data:/wordlists:ro
+    depends_on:
+      - seclists-init
+    networks:
+      - control_net
+      - recon_net
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
 
 volumes:
   n8n_postgres_data:
   platform_postgres_data:
   opensearch_data:
   minio_data:
+  # Nuclei templates — populated by nuclei-templates-init on first compose up
+  nuclei_templates:
+  # SecLists wordlists — populated by seclists-init on first compose up (~4-6 GB)
+  seclists_data:
 
 networks:
   control_net:

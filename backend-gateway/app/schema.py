@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import List, Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 WorkspaceRole = Literal["owner", "admin", "billing"]
 ProgramRole = Literal["admin", "operator", "viewer"]
@@ -14,6 +14,40 @@ ProgramRole = Literal["admin", "operator", "viewer"]
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+
+
+class RegisterRequest(BaseModel):
+    """Signup payload.
+
+    The password rules live here rather than in the router so a malformed
+    request is rejected by FastAPI as a 422 before any database work happens.
+    `max_length=72` is not arbitrary: bcrypt silently truncates past 72 bytes,
+    so accepting more would let a user believe characters count when they do
+    not.
+    """
+
+    email: EmailStr
+    password: str = Field(min_length=12, max_length=72)
+    name: str = Field(min_length=1, max_length=200)
+
+    @field_validator("password")
+    @classmethod
+    def _password_is_mixed(cls, value: str) -> str:
+        if not any(char.isdigit() for char in value):
+            raise ValueError("password must contain at least one digit")
+        if not any(char.isalpha() for char in value):
+            raise ValueError("password must contain at least one letter")
+        if len(value.encode("utf-8")) > 72:
+            raise ValueError("password must be at most 72 bytes")
+        return value
+
+    @field_validator("name")
+    @classmethod
+    def _name_is_not_blank(cls, value: str) -> str:
+        trimmed = value.strip()
+        if trimmed == "":
+            raise ValueError("name must not be blank")
+        return trimmed
 
 
 class TokenResponse(BaseModel):
@@ -166,6 +200,18 @@ class RunResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class HostItemResponse(BaseModel):
+    host: str
+    asset_count: int
+    tools: List[str] = Field(default_factory=list)
+
+
+class RunHostsResponse(BaseModel):
+    run_id: UUID
+    total_hosts: int
+    hosts: List[HostItemResponse] = Field(default_factory=list)
+
+
 # --- /internal/* (n8n workflow nodes -> Gateway; never called by end users) ---
 
 
@@ -179,6 +225,12 @@ class TesLeaseRequest(BaseModel):
     run_id: UUID
     params: dict = Field(default_factory=dict)
     resume_url: Optional[str] = None
+    # The concrete hostname/IP the workflow intends to hand the TES. Optional
+    # because not every tool is invoked against a single value (some consume
+    # the whole allowed_domains set), but when it IS present the Gateway
+    # validates it against the Target before issuing a lease — the scope check
+    # ARCHITECTURE_AND_ROADMAP.md section 5, A.3 calls for.
+    target_value: Optional[str] = None
 
 
 class TesLeaseResponse(BaseModel):
@@ -231,15 +283,62 @@ class TesRegistryUpdate(BaseModel):
 
 
 class TesRegistryResponse(BaseModel):
+    """Read shape for tes_registry — deliberately NOT symmetric with the
+    create/update shapes.
+
+    `static_token` is the shared secret a TES accepts as its own auth header;
+    it is writable via POST/PATCH but must never be echoed back on a read, or
+    every caller allowed to list the registry would also be able to
+    impersonate the n8n workers against every TES. Callers that need to know
+    whether a token is configured get `has_static_token` instead of the value.
+    """
+
     id: UUID
     tool_name: str
     base_url: str
     health_status: str
     vault_secret_path: Optional[str]
-    static_token: Optional[str]
+    has_static_token: bool
     max_concurrency: int
     timeout_seconds: int
     updated_at: datetime
 
+
+
+# --- Read/list shapes for the dashboard ---
+
+
+class FindingResponse(BaseModel):
+    id: UUID
+    program_id: UUID
+    target_id: UUID
+    run_id: UUID
+    asset_id: Optional[UUID]
+    severity: str
+    title: str
+    description: Optional[str]
+    status: str
+    cve_refs: List[str] = Field(default_factory=list)
+    created_at: datetime
+
     model_config = {"from_attributes": True}
 
+
+class AssetListItem(BaseModel):
+    """Deliberately separate from AssetResponse, which is nested inside
+    RunResponse: that one is intentionally minimal because a single Run can
+    carry thousands of assets. This one is for the standalone /assets list,
+    where the caller needs to know which run and target an asset came from.
+    """
+
+    id: UUID
+    program_id: UUID
+    target_id: UUID
+    run_id: UUID
+    type: str
+    value: str
+    source_tool: str
+    first_seen_at: datetime
+    last_seen_at: datetime
+
+    model_config = {"from_attributes": True}

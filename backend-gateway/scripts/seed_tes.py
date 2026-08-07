@@ -1,5 +1,6 @@
 """
-Seeds the initial TES registry entries (theharvester & pd-recon) in the platform Postgres database.
+Seeds the initial TES registry entries in the platform Postgres database.
+Covers: theharvester, pd-recon, pd-vuln, net-scan, web-utils, pd-scan, pd-crawler, fuzz-svc.
 
 Usage:
     PLATFORM_DATABASE_URL=postgresql+asyncpg://... python3 scripts/seed_tes.py
@@ -54,6 +55,30 @@ async def seed() -> None:
             "static_token": os.getenv("WEB_UTILS_TOKEN", "secret-tok"),
             "max_concurrency": 3,
             "timeout_seconds": 300,
+        },
+        # ── New TES: Nuclei scanner ─────────────────────────────────────────────
+        {
+            "tool_name": "pd-scan",
+            "base_url": "http://pd-scan:8000",
+            "static_token": os.getenv("PD_SCAN_TOKEN", "secret-tok"),
+            "max_concurrency": 2,
+            "timeout_seconds": 600,
+        },
+        # ── New TES: Web crawlers (Katana + GoSpider) ─────────────────────────
+        {
+            "tool_name": "pd-crawler",
+            "base_url": "http://pd-crawler:8000",
+            "static_token": os.getenv("PD_CRAWLER_TOKEN", "secret-tok"),
+            "max_concurrency": 3,
+            "timeout_seconds": 600,
+        },
+        # ── New TES: Web fuzzer (ffuf + dirsearch) ──────────────────────────
+        {
+            "tool_name": "fuzz-svc",
+            "base_url": "http://fuzz-svc:8000",
+            "static_token": os.getenv("FUZZ_SVC_TOKEN", "secret-tok"),
+            "max_concurrency": 2,
+            "timeout_seconds": 900,
         },
     ]
 

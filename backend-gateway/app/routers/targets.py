@@ -64,6 +64,45 @@ async def create_target(
     return target
 
 
+@router.get("/targets", response_model=list[TargetResponse])
+async def list_all_targets(
+    db: AsyncSession = Depends(get_db),
+) -> list[Target]:
+    result = await db.execute(
+        select(Target).where(Target.deleted_at.is_(None)).order_by(Target.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+@router.post("/targets", response_model=TargetResponse, status_code=201)
+async def create_target_global(
+    payload: TargetCreate,
+    db: AsyncSession = Depends(get_db),
+) -> Target:
+    # Resolve default program & user
+    from app.models import Program, User
+    prog_res = await db.execute(select(Program).limit(1))
+    prog = prog_res.scalar_one_or_none()
+    usr_res = await db.execute(select(User).limit(1))
+    usr = usr_res.scalar_one_or_none()
+
+    if not prog or not usr:
+        raise HTTPException(status_code=400, detail="no_default_program_found")
+
+    target = Target(
+        program_id=prog.id,
+        name=payload.name,
+        root_domains=payload.root_domains,
+        cidrs=payload.cidrs,
+        out_of_scope=payload.out_of_scope,
+        created_by=usr.id,
+    )
+    db.add(target)
+    await db.commit()
+    await db.refresh(target)
+    return target
+
+
 @router.get("/programs/{program_id}/targets", response_model=list[TargetResponse])
 async def list_targets(
     program_id: UUID,

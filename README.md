@@ -1,122 +1,64 @@
 # Merovíngio
 
-Plataforma self-hosted de automação de segurança ofensiva (purple team) e orquestração de reconhecimentos/varreduras baseada em n8n, FastAPI, OpenSearch e MinIO.
+Local, self-hosted equivalent of Trickest (offensive-security automation/recon platform). Full analysis, architecture decisions, and roadmap: [`ARCHITECTURE_AND_ROADMAP.md`](ARCHITECTURE_AND_ROADMAP.md).
 
-Documentação de arquitetura e decisões de projeto: [`ARCHITECTURE_AND_ROADMAP.md`](ARCHITECTURE_AND_ROADMAP.md) | Guia de próximos passos: [`NEXT_STEPS.md`](NEXT_STEPS.md).
+## Escopo de uso (decisão do dono do projeto, 2026-08-05)
 
----
+- **Ferramenta interna, não SaaS**: disponibilizada em `localhost` para a equipe de **purple team**, não exposta a terceiros. Isso resolve a ressalva de licenciamento do n8n (Sustainable Use License) levantada no roadmap — só se torna relevante se algum dia isso mudar para revenda/hospedagem multi-tenant externa.
+- **Segredos via `.env`/Docker Compose `secrets`**, não Vault — decisão explícita de não graduar para Vault por enquanto (revisitar só se surgir um gatilho concreto: multi-nó, dezenas de chaves, necessidade de rotação/auditoria — ver `ARCHITECTURE_AND_ROADMAP.md` seção 7).
+- **Nome do projeto**: Merovíngio.
 
-## 🎯 Escopo de Uso & Decisões Operacionais
+## Status
 
-- **Ferramenta Interna de Purple Team**: Executada exclusivamente em ambiente de desenvolvimento/operação local (`localhost`), protegida por autenticação JWT e validação estrita de escopo via `scope_guard.py`.
-- **Custódia Isolada de Ferramentas Ofensivas**: O n8n **nunca** executa binários ofensivos diretamente. Toda ferramenta senta atrás de um **Tool Execution Service (TES)** HTTP dedicado sob a custódia do `Pentesters-Team`.
-- **Padrão de Callback Assíncrono (Sem Polling)**: O n8n utiliza o nó *Wait Webhook*. Quando um TES encerra a execução, ele chama o `/internal/tes-callback` no Gateway, que persiste os assets/findings no Postgres, indexa no OpenSearch e retoma a execução no n8n.
+- **"Fundação crítica" (Backend Gateway core)** — done. See [`backend-gateway/`](backend-gateway/): scope evolution (multi-Target/CIDR reusing `scope_guard.is_in_scope()`), full platform Postgres schema, JWT auth, Workspace→Program→Target CRUD with RBAC and audit log. 42 tests passing against real Postgres.
+- **Vertical PoC (n8n ↔ Gateway ↔ TES lease/callback pattern)** — done, proven end-to-end against the real stack (see below).
+- **Not yet built**: additional Tool Execution Services beyond `recon-runner`, the Frontend, Data pipelines (wordlists/resolvers/CVE), Vault, Kubernetes. See the roadmap's Fase v1/v2.
 
----
+## The vertical PoC
 
-## 🏗️ Arquitetura da Stack Local (11 Contêineres)
+Validates the core architectural decision (`ARCHITECTURE_AND_ROADMAP.md`, section 3): n8n never executes offensive tools directly; every tool sits behind a Tool Execution Service (TES) that n8n calls over HTTP after leasing it from the Gateway, and the Gateway is the source of truth for Run/Asset state — not n8n, not the TES.
 
-### 1. Frontend Shell (SPA Web)
-- **Tecnologias**: Vite + React + TypeScript + Vanilla CSS (Glassmorphism UI / Dark Mode).
-- **Interface**: Dashboard de Execuções, Workflow Launcher, Gestor de Targets/Escopo e Monitoramento de TES.
-- **Acesso Local**: `http://localhost:5173`
+**Proven for real**, not simulated: a live theHarvester scan against `hackthissite.org`, run through the actual `recon-runner` service (already existing in `Pentesters-Team/services/recon-runner/`, unmodified) via a real n8n workflow, ending in **83 discovered subdomains persisted as `Asset` rows** and the `Run` reconciled to `status: success`.
 
-### 2. Backend Gateway (`backend-gateway/`)
-- **Tecnologias**: Python 3.13, FastAPI, SQLAlchemy 2.0 (Async), Alembic, AsyncPG.
-- **Porta**: `18000`
-- **Funcionalidades**: RBAC (Workspace ➔ Program ➔ Target), Autenticação JWT, Registro de TES (`/admin/tes`), Webhooks n8n, Validação de Escopo e Auditoria.
+Flow: `POST /workflows/{id}/run` (Gateway) → n8n production webhook → `Execution Started` → `TES Lease` (Gateway resolves `theharvester` → `recon-runner`'s address + token) → `Call recon-runner` (n8n calls the TES directly, per the custody rule) → `Wait` + `Poll Job` → branch on done/error → `TES Callback` (persists assets in Postgres) → `N8n Callback` (reconciles `Run` status). The full node graph is in [`workflows/recon-baseline.json`](workflows/recon-baseline.json) (exported from the running n8n instance).
 
-### 3. Orquestrador n8n
-- **Porta**: `15678` (Editor n8n em Queue Mode com Redis + Postgres).
+### Two real things this PoC surfaced (both already fixed in the code, not just noted)
 
-### 4. Busca & Indexação (OpenSearch + Indexer)
-- **OpenSearch 2.18**: Cluster single-node (`9200`).
-- **`data-indexer`**: Microsserviço FastAPI (`8000`) com cliente `opensearch-py`, gerenciando os índices `assets_v1` e `findings_v1` com buscas full-text (`/search/assets`, `/search/findings`).
+1. **n8n's HTTP Request node fails to parse empty `204` response bodies as JSON** — a real interoperability gotcha, not a hypothetical. Fixed by having the fire-and-forget `/internal/*` endpoints (`execution-started`, `tes-callback`, `n8n-callback`) return `200 {}` instead of `204`, which is friendlier to any HTTP client, not just n8n's default node config.
+2. **A fixed 30-second wait before polling the TES was too tight** — the first real run timed out (`recon-runner` was still mid-scan against slow OSINT sources) and the `Run` correctly reconciled to `completed_with_warnings`/`failed` rather than silently reporting success — exactly the "lost callback" guard the architecture doc calls for. This is precisely why DevOps's plan (roadmap section 7, item #7) calls for migrating from fixed-wait polling to an async webhook callback from the TES before v1 — this PoC's 60-second fixed wait is a deliberate, documented simplification for proving the pattern, not the production design.
 
-### 5. Pipeline de Dados & Versionamento (MinIO + Data Sync)
-- **MinIO**: Object Storage S3 (`19000` API, `19001` Console).
-- **`data-sync-svc`**: Ingestor e espelho de inteligência (`s3://wordlists`, `s3://resolvers`, `s3://cve`) com versionamento por snapshot (`s3://<bucket>/<timestamp>/` + `latest.json`).
-- **Datasets**: SecLists, Trickest CVE, NVD API 2.0 e Pools de Resolvers DNS.
+`Pentesters-Team/tools/theHarvester/` had to be vendored in during this PoC (it was an empty placeholder in this checkout — `recon-runner`'s Docker build had never actually succeeded here before). It's now a real git clone of `laramies/theHarvester`.
 
----
-
-## 🛠️ Tool Execution Services (TES) Ativos
-
-Todos os TES pertencem ao `Pentesters-Team` e operam com tokens estáticos de autenticação interna e concorrência controlada por semáforo:
-
-| TES | Ferramentas Encapsuladas | Endereço Interno | Descrição |
-|---|---|---|---|
-| **`theharvester`** | theHarvester | `http://recon-runner:8000` | OSINT e enumeração de subdomínios/emails. |
-| **`pd-recon`** | `subfinder`, `httpx`, `katana`, `naabu`, `cvemap` | `http://pd-recon:8000` | Recon DNS, HTTP probing, web crawling e port scan rápido. |
-| **`pd-vuln`** | `nuclei` + `nuclei-templates` | `http://pd-vuln:8000` | Varredura ativa de vulnerabilidades web/infra. |
-| **`net-scan`** | `nmap` | `http://net-scan:8000` | Varredura de serviços/portas com sanitização de flags. |
-| **`web-utils`** | `cariddi`, `gmapsapiscanner` | `http://web-utils:8000` | Extração de segredos/endpoints JS e auditoria de chaves de API. |
-
----
-
-## 🚀 Como Executar a Plataforma
-
-### 1. Criar a Rede Externa e Subir a Stack
-```bash
-# Rede comum para comunicação entre contêineres TES e Gateway
-docker network create recon_net || true
-
-# Subir a stack inteira do Merovíngio + TES
-cd Workspace/Merovingio && docker compose up -d --build
-```
-
-### 2. Seed Automático do Banco de Dados
-```bash
-# Rodar migrações Alembic
-docker exec merovingio-backend-gateway python -m alembic upgrade head
-
-# Popular os 5 TES no Postgres
-docker exec merovingio-backend-gateway python3 scripts/seed_tes.py
-
-# Seed do usuário administrador inicial
-docker exec merovingio-backend-gateway python3 scripts/seed_user.py --email admin@example.com --password 'Password123!'
-```
-
-### 3. Iniciar o Frontend Web
-```bash
-cd Workspace/Merovingio/frontend && npm run dev
-```
-Acesse **`http://localhost:5173`** no navegador.
-
----
-
-## 🧪 Testes Automatizados
+## Running it
 
 ```bash
-# Backend Gateway (43 testes contra Postgres real)
-cd backend-gateway && PLATFORM_TEST_DATABASE_URL=postgresql+asyncpg://gateway:gateway@localhost:15433/gateway_test .venv/bin/python -m pytest
+# One-time: the external network Pentesters-Team's recon-runner and this
+# stack both join (create once, never recreate — see docker-compose.yml).
+docker network create recon_net
 
-# TES pd-recon (4 testes)
-cd ../../Pentesters-Team/services/pd-recon && PYTHONPATH=. python3 -m pytest
+# Bring up recon-runner (Pentesters-Team owns this compose file/service)
+cd "../../Pentesters-Team" && docker compose up -d --build recon-runner
 
-# TES pd-vuln (4 testes)
-cd ../pd-vuln && PYTHONPATH=. python3 -m pytest
+# Bring up n8n (queue mode) + the platform Postgres + the Gateway
+cd "../Workspace/Merovingio" && docker compose up -d --build
 
-# TES net-scan (4 testes)
-cd ../net-scan && PYTHONPATH=. python3 -m pytest
+# Run the Gateway's DB migrations (one-off, against platform-postgres)
+docker exec -e PLATFORM_DATABASE_URL="postgresql+asyncpg://gateway:gateway_dev_password@platform-postgres:5432/gateway" \
+  merovingio-backend-gateway python -m alembic upgrade head
 
-# TES web-utils (4 testes)
-cd ../web-utils && PYTHONPATH=. python3 -m pytest
-
-# Serviço Data Indexer (2 testes)
-cd ../../../Workspace/Merovingio/data-indexer && PYTHONPATH=. python3 -m pytest
-
-# Serviço Data Sync (6 testes)
-cd ../data-sync-svc && PYTHONPATH=. python3 -m pytest
+# Seed a user (no signup endpoint — see backend-gateway/README.md)
+docker exec -e PLATFORM_DATABASE_URL="postgresql+asyncpg://gateway:gateway_dev_password@platform-postgres:5432/gateway" \
+  -e GATEWAY_JWT_SECRET="dev-only-jwt-secret-change-me" \
+  merovingio-backend-gateway python scripts/seed_user.py --email dev@example.com --password 'Password123!'
 ```
 
----
+Import and activate `workflows/recon-baseline.json` in n8n (`http://localhost:15678`, or via `n8n import:workflow`/`n8n update:workflow --active=true` in the `merovingio-n8n-main` container — restart the container after activating, that's an n8n quirk, not ours), register a `TesRegistry` row pointing `theharvester` at `http://recon-runner:8000` with the same token as `Pentesters-Team/.env`'s `RECON_RUNNER_TOKEN`, create a Workspace/Program/Target via the Gateway API, register the workflow (`POST /workspaces/{id}/workflows` with the webhook's production URL), then `POST /workflows/{id}/run`.
 
-## 📂 Estrutura de Diretórios
+**Ports exposed to the host are a PoC convenience only** (`15678` n8n editor, `18000` Gateway) — production puts both behind the Gateway/reverse-proxy only, per the roadmap's custody rule (n8n's editor/API is never exposed directly).
 
-- [`backend-gateway/`](backend-gateway/) — API Gateway da Plataforma (FastAPI + SQLAlchemy/Alembic).
-- [`frontend/`](frontend/) — SPA Web em React + TypeScript + Vite.
-- [`data-indexer/`](data-indexer/) — Microsserviço de Busca e Indexação com OpenSearch.
-- [`data-sync-svc/`](data-sync-svc/) — Microsserviço de Ingestão e Versionamento em MinIO.
-- [`workflows/`](workflows/) — Definições de Workflows n8n em JSON exportado ([`recon-baseline.json`](workflows/recon-baseline.json)).
-- [`docker-compose.yml`](docker-compose.yml) — Arquivo de orquestração dos 11 contêineres Docker.
+## Layout
+
+- [`ARCHITECTURE_AND_ROADMAP.md`](ARCHITECTURE_AND_ROADMAP.md) — the full multi-team analysis and MVP→v1→v2 roadmap.
+- [`backend-gateway/`](backend-gateway/) — the platform's Backend Gateway (FastAPI + SQLAlchemy/Alembic).
+- [`workflows/`](workflows/) — n8n workflow definitions, versioned as exported JSON (per the roadmap's recommendation to treat them as code).
+- [`docker-compose.yml`](docker-compose.yml) — the vertical-PoC stack (n8n queue mode, platform Postgres, Gateway). Not yet the hardened 3-network production skeleton from the roadmap's DevOps section — that's Fase v1.

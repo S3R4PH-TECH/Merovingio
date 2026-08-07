@@ -42,6 +42,18 @@ def _test_database_url() -> str:
 
 
 @pytest_asyncio.fixture(autouse=True)
+async def _clean_rate_limiter() -> AsyncIterator[None]:
+    """The login limiter keeps process-global counters, so failed-login tests
+    would otherwise leak attempts into later tests in the same run (the DB is
+    recreated per test, but a module-level dict is not)."""
+    from app import rate_limit
+
+    rate_limit.reset_all()
+    yield
+    rate_limit.reset_all()
+
+
+@pytest_asyncio.fixture(autouse=True)
 async def _clean_schema() -> AsyncIterator[None]:
     """Drops and recreates every table before each test — real Postgres,
     fully isolated test-to-test state, no leftover rows between tests."""

@@ -31,3 +31,13 @@ frontend/node_modules/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Logs & Temporary Data
+*.log
+*.sqlite
+*.db
+*.zip
+*.tar.gz
+tmp/
+temp/
+

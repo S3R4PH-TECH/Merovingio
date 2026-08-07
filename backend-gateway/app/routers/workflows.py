@@ -12,6 +12,7 @@ webhook URL is what gets registered via POST /workflows.
 """
 from __future__ import annotations
 
+from typing import List
 from uuid import UUID
 
 import httpx
@@ -120,6 +121,18 @@ async def trigger_run(
             raise HTTPException(status_code=502, detail=f"failed_to_trigger_workflow: {exc}") from exc
 
     return RunAccepted(run_id=run.id, status=run.status)
+
+
+@router.get("/runs", response_model=List[RunResponse])
+async def list_runs(
+    db: AsyncSession = Depends(get_db),
+) -> List[Run]:
+    result = await db.execute(
+        select(Run)
+        .order_by(Run.started_at.desc())
+        .options(selectinload(Run.tool_execution_jobs), selectinload(Run.assets))
+    )
+    return list(result.scalars().all())
 
 
 @router.get("/runs/{run_id}", response_model=RunResponse)

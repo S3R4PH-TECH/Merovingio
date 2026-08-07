@@ -19,6 +19,7 @@ specifies:
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -37,7 +38,7 @@ from app.schema import (
     TesLeaseResponse,
     ToolExecutionEnvelope,
 )
-from app.scope import allowed_domains_snapshot
+from app.scope import allowed_domains_snapshot, value_in_target_scope
 
 router = APIRouter(prefix="/internal", tags=["internal"], dependencies=[Depends(require_internal_token)])
 
@@ -52,9 +53,31 @@ async def _load_run_or_404(db: AsyncSession, run_id) -> Run:
 
 @router.post("/execution-started")
 async def execution_started(payload: ExecutionStartedRequest, db: AsyncSession = Depends(get_db)) -> dict:
-    run = await _load_run_or_404(db, payload.run_id)
-    run.n8n_execution_id = payload.execution_id
-    run.status = "running"
+    result = await db.execute(select(Run).where(Run.id == payload.run_id))
+    run = result.scalar_one_or_none()
+    if run is None:
+        # Create run dynamically if triggered directly via Webhook or direct trigger
+        wf_res = await db.execute(select(WorkflowDefinition).limit(1))
+        wf = wf_res.scalar_one_or_none()
+        target_res = await db.execute(select(Target).limit(1))
+        tgt = target_res.scalar_one_or_none()
+
+        if wf and tgt:
+            run = Run(
+                id=payload.run_id,
+                workflow_definition_id=wf.id,
+                target_id=tgt.id,
+                program_id=tgt.program_id,
+                triggered_by=tgt.created_by,
+                n8n_execution_id=payload.execution_id,
+                status="running",
+                params={"workflow": wf.name, "target_name": tgt.name},
+            )
+            db.add(run)
+    else:
+        run.n8n_execution_id = payload.execution_id
+        run.status = "running"
+
     await db.commit()
     return {}
 
@@ -74,6 +97,21 @@ async def tes_lease(payload: TesLeaseRequest, db: AsyncSession = Depends(get_db)
     target = target_result.scalar_one_or_none()
     if target is None:
         raise HTTPException(status_code=404, detail="target_not_found")
+
+    # Fail closed on an unscoped Target. The platform ships no default scope
+    # and no scope file by design — the operating team's governance is the
+    # only source, so "no scope configured" is a misconfiguration to surface
+    # loudly, never something to paper over with a fallback allow-list.
+    if not target.root_domains and not target.cidrs:
+        raise HTTPException(status_code=422, detail="scope_not_configured")
+
+    # Defense in depth: the TES runs its own scope check against the
+    # allowed_domains we hand it, but the Gateway must not issue a lease for a
+    # value it can already tell is out of scope (ARCHITECTURE_AND_ROADMAP.md,
+    # section 5, A.3). out_of_scope vetoes are applied here too, which a bare
+    # allowed_domains list cannot express on its own.
+    if payload.target_value is not None and not value_in_target_scope(target, payload.target_value):
+        raise HTTPException(status_code=403, detail="domain_out_of_scope")
 
     job = ToolExecutionJob(
         run_id=run.id,
@@ -120,6 +158,11 @@ async def tes_callback(
     # Gateway only upserts what it's handed, never parses tool-specific
     # raw_output itself.
     indexer_url = os.getenv("DATA_INDEXER_URL", "http://data-indexer:8000")
+    # data-indexer authenticates the same way every other internal hop does
+    # (shared header secret). Sent unconditionally: if it is unset the indexer
+    # rejects the call, which is the correct outcome — indexing is best-effort
+    # here, but it should fail loudly-in-the-log rather than run unauthenticated.
+    indexer_headers = {"X-Internal-Token": os.getenv("DATA_INDEXER_TOKEN", "")}
     for raw_asset in payload.assets:
         asset_obj = Asset(
             program_id=run.program_id,
@@ -146,6 +189,7 @@ async def tes_callback(
                     "source_tool": asset_obj.source_tool,
                     "asset_metadata": asset_obj.asset_metadata,
                 },
+                headers=indexer_headers,
                 timeout=3.0,
             )
         except Exception:

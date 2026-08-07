@@ -54,6 +54,22 @@ def verify_password(password: str, password_hash: str) -> bool:
         return False
 
 
+def verify_dummy_password(password: str) -> None:
+    """Burns the same bcrypt work a real verification would, for the
+    unknown-email path of login.
+
+    Without this, `POST /auth/login` returns measurably faster for an address
+    with no account (no hash to check) than for one with a wrong password —
+    a timing oracle that turns the endpoint into an account-existence check.
+    The hash is computed once at import rather than per call so the cost paid
+    at request time matches a genuine verify.
+    """
+    verify_password(password, _DUMMY_HASH)
+
+
+_DUMMY_HASH = hash_password("unused-constant-time-login-placeholder")
+
+
 def create_access_token(user_id: UUID) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     payload = {"sub": str(user_id), "exp": expire}

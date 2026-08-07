@@ -1,0 +1,304 @@
+[
+  {
+    "createdAt": "2026-08-07T12:00:00.000Z",
+    "updatedAt": "2026-08-07T12:00:00.000Z",
+    "id": "recon-full-chain-v1",
+    "name": "recon-full-chain (Subfinder → Naabu → Nuclei)",
+    "active": false,
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "run-full-chain",
+          "responseMode": "onReceived",
+          "options": {}
+        },
+        "id": "webhook-trigger",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [-400, 300],
+        "webhookId": "run-full-chain"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://backend-gateway:8000/internal/execution-started",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ { \"run_id\": $json.body.run_id, \"execution_id\": $execution.id } }}",
+          "options": {}
+        },
+        "id": "execution-started",
+        "name": "Execution Started",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [-180, 300],
+        "credentials": {
+          "httpHeaderAuth": { "name": "Gateway Internal Token" }
+        }
+      },
+
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://backend-gateway:8000/internal/tes-lease",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ { \"tool_name\": \"pd-recon\", \"run_id\": $node[\"Webhook\"].json.body.run_id, \"resume_url\": \"http://n8n-main:5678/webhook-waiting/\" + $execution.id, \"params\": {} } }}",
+          "options": {}
+        },
+        "id": "lease-pd-recon",
+        "name": "Lease pd-recon",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [40, 300],
+        "credentials": {
+          "httpHeaderAuth": { "name": "Gateway Internal Token" }
+        }
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $node[\"Lease pd-recon\"].json.tes_base_url + \"/run\" }}",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ { \"domain\": $node[\"Webhook\"].json.body.domain, \"run_id\": $node[\"Webhook\"].json.body.run_id, \"tool_execution_job_id\": $node[\"Lease pd-recon\"].json.tool_execution_job_id, \"callback_url\": \"http://backend-gateway:8000/internal/tes-callback\", \"resume_url\": \"http://n8n-main:5678/webhook-waiting/\" + $execution.id, \"allowed_domains\": $node[\"Lease pd-recon\"].json.allowed_domains } }}",
+          "options": {}
+        },
+        "id": "call-pd-recon",
+        "name": "Call pd-recon (Subfinder)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [260, 300],
+        "credentials": {
+          "httpHeaderAuth": { "name": "pd-recon Token" }
+        }
+      },
+      {
+        "parameters": {
+          "resume": "webhook",
+          "options": { "responseCode": 200 }
+        },
+        "id": "wait-pd-recon",
+        "name": "Wait — pd-recon",
+        "type": "n8n-nodes-base.wait",
+        "typeVersion": 1.1,
+        "position": [480, 300],
+        "webhookId": "wait-pd-recon"
+      },
+
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://backend-gateway:8000/internal/tes-lease",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ { \"tool_name\": \"net-scan\", \"run_id\": $node[\"Webhook\"].json.body.run_id, \"resume_url\": \"http://n8n-main:5678/webhook-waiting/\" + $execution.id, \"params\": {} } }}",
+          "options": {}
+        },
+        "id": "lease-net-scan",
+        "name": "Lease net-scan",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [700, 300],
+        "credentials": {
+          "httpHeaderAuth": { "name": "Gateway Internal Token" }
+        }
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $node[\"Lease net-scan\"].json.tes_base_url + \"/run\" }}",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ { \"target\": $node[\"Webhook\"].json.body.domain, \"engine\": \"naabu\", \"run_id\": $node[\"Webhook\"].json.body.run_id, \"tool_execution_job_id\": $node[\"Lease net-scan\"].json.tool_execution_job_id, \"callback_url\": \"http://backend-gateway:8000/internal/tes-callback\", \"resume_url\": \"http://n8n-main:5678/webhook-waiting/\" + $execution.id, \"allowed_domains\": $node[\"Lease net-scan\"].json.allowed_domains } }}",
+          "options": {}
+        },
+        "id": "call-net-scan",
+        "name": "Call net-scan (Naabu)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [920, 300],
+        "credentials": {
+          "httpHeaderAuth": { "name": "net-scan Token" }
+        }
+      },
+      {
+        "parameters": {
+          "resume": "webhook",
+          "options": { "responseCode": 200 }
+        },
+        "id": "wait-net-scan",
+        "name": "Wait — net-scan",
+        "type": "n8n-nodes-base.wait",
+        "typeVersion": 1.1,
+        "position": [1140, 300],
+        "webhookId": "wait-net-scan"
+      },
+
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://backend-gateway:8000/internal/tes-lease",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ { \"tool_name\": \"pd-scan\", \"run_id\": $node[\"Webhook\"].json.body.run_id, \"resume_url\": \"http://n8n-main:5678/webhook-waiting/\" + $execution.id, \"params\": {} } }}",
+          "options": {}
+        },
+        "id": "lease-pd-scan",
+        "name": "Lease pd-scan",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [1360, 300],
+        "credentials": {
+          "httpHeaderAuth": { "name": "Gateway Internal Token" }
+        }
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $node[\"Lease pd-scan\"].json.tes_base_url + \"/run\" }}",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ { \"target\": \"https://\" + $node[\"Webhook\"].json.body.domain, \"run_id\": $node[\"Webhook\"].json.body.run_id, \"tool_execution_job_id\": $node[\"Lease pd-scan\"].json.tool_execution_job_id, \"callback_url\": \"http://backend-gateway:8000/internal/tes-callback\", \"resume_url\": \"http://n8n-main:5678/webhook-waiting/\" + $execution.id, \"template_categories\": [\"cves\", \"misconfigs\", \"exposures\"], \"severity\": [\"critical\", \"high\", \"medium\"], \"allowed_domains\": $node[\"Lease pd-scan\"].json.allowed_domains } }}",
+          "options": {}
+        },
+        "id": "call-pd-scan",
+        "name": "Call pd-scan (Nuclei)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [1580, 300],
+        "credentials": {
+          "httpHeaderAuth": { "name": "pd-scan Token" }
+        }
+      },
+      {
+        "parameters": {
+          "resume": "webhook",
+          "options": { "responseCode": 200 }
+        },
+        "id": "wait-pd-scan",
+        "name": "Wait — pd-scan",
+        "type": "n8n-nodes-base.wait",
+        "typeVersion": 1.1,
+        "position": [1800, 300],
+        "webhookId": "wait-pd-scan"
+      },
+
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://backend-gateway:8000/internal/n8n-callback",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ { \"run_id\": $node[\"Webhook\"].json.body.run_id, \"execution_id\": $execution.id, \"status\": $json.status ?? \"success\" } }}",
+          "options": {}
+        },
+        "id": "n8n-callback-success",
+        "name": "N8n Callback (success)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [2020, 300],
+        "credentials": {
+          "httpHeaderAuth": { "name": "Gateway Internal Token" }
+        }
+      },
+
+      {
+        "parameters": {},
+        "id": "error-trigger",
+        "name": "Error Trigger",
+        "type": "n8n-nodes-base.errorTrigger",
+        "typeVersion": 1,
+        "position": [-400, 500]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://backend-gateway:8000/internal/n8n-callback",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ { \"run_id\": $json.execution.variables.run_id ?? \"\", \"execution_id\": $json.execution.id, \"status\": \"failed\", \"error\": $json.error.message } }}",
+          "options": {}
+        },
+        "id": "n8n-callback-error",
+        "name": "N8n Callback (error)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [-180, 500],
+        "credentials": {
+          "httpHeaderAuth": { "name": "Gateway Internal Token" }
+        }
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [[{ "node": "Execution Started", "type": "main", "index": 0 }]]
+      },
+      "Execution Started": {
+        "main": [[{ "node": "Lease pd-recon", "type": "main", "index": 0 }]]
+      },
+      "Lease pd-recon": {
+        "main": [[{ "node": "Call pd-recon (Subfinder)", "type": "main", "index": 0 }]]
+      },
+      "Call pd-recon (Subfinder)": {
+        "main": [[{ "node": "Wait — pd-recon", "type": "main", "index": 0 }]]
+      },
+      "Wait — pd-recon": {
+        "main": [[{ "node": "Lease net-scan", "type": "main", "index": 0 }]]
+      },
+      "Lease net-scan": {
+        "main": [[{ "node": "Call net-scan (Naabu)", "type": "main", "index": 0 }]]
+      },
+      "Call net-scan (Naabu)": {
+        "main": [[{ "node": "Wait — net-scan", "type": "main", "index": 0 }]]
+      },
+      "Wait — net-scan": {
+        "main": [[{ "node": "Lease pd-scan", "type": "main", "index": 0 }]]
+      },
+      "Lease pd-scan": {
+        "main": [[{ "node": "Call pd-scan (Nuclei)", "type": "main", "index": 0 }]]
+      },
+      "Call pd-scan (Nuclei)": {
+        "main": [[{ "node": "Wait — pd-scan", "type": "main", "index": 0 }]]
+      },
+      "Wait — pd-scan": {
+        "main": [[{ "node": "N8n Callback (success)", "type": "main", "index": 0 }]]
+      },
+      "Error Trigger": {
+        "main": [[{ "node": "N8n Callback (error)", "type": "main", "index": 0 }]]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "errorWorkflow": "recon-full-chain-v1"
+    },
+    "staticData": null,
+    "meta": {
+      "description": "Full recon chain: Subfinder (subdomain enum) → Naabu (port scan) → Nuclei (vuln scan). All tokens via n8n Credentials — none hardcoded. Requires credentials: 'Gateway Internal Token' (X-Internal-Token header), 'pd-recon Token', 'net-scan Token', 'pd-scan Token'."
+    },
+    "pinData": null,
+    "versionId": null,
+    "triggerCount": 1,
+    "tags": []
+  }
+]

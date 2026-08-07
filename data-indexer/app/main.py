@@ -6,13 +6,19 @@ from __future__ import annotations
 import datetime
 from typing import Any, Dict, List
 
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
+from app.internal_auth import require_internal_token
 from app.opensearch_client import ASSETS_ALIAS, FINDINGS_ALIAS, get_opensearch_client, init_indices
 from app.schema import AssetIndexRequest, FindingIndexRequest, SearchHit, SearchQueryRequest, SearchResponse
 
 app = FastAPI(title="data-indexer")
+
+# Every index/search route sits behind the shared internal token. /healthz
+# stays open on `app` itself because Docker's healthcheck calls it with no
+# credentials (see docker-compose.yml).
+router = APIRouter(dependencies=[Depends(require_internal_token)])
 
 
 @app.on_event("startup")
@@ -33,7 +39,7 @@ async def healthz() -> JSONResponse:
         return JSONResponse(status_code=503, content={"status": "unhealthy", "error": str(exc)})
 
 
-@app.post("/index/asset", status_code=201)
+@router.post("/index/asset", status_code=201)
 async def index_asset(payload: AssetIndexRequest) -> Dict[str, Any]:
     try:
         client = get_opensearch_client()
@@ -45,7 +51,7 @@ async def index_asset(payload: AssetIndexRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"indexing_failed: {exc}")
 
 
-@app.post("/index/finding", status_code=201)
+@router.post("/index/finding", status_code=201)
 async def index_finding(payload: FindingIndexRequest) -> Dict[str, Any]:
     try:
         client = get_opensearch_client()
@@ -57,7 +63,7 @@ async def index_finding(payload: FindingIndexRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"indexing_failed: {exc}")
 
 
-@app.post("/search/assets", response_model=SearchResponse)
+@router.post("/search/assets", response_model=SearchResponse)
 async def search_assets(payload: SearchQueryRequest) -> SearchResponse:
     try:
         client = get_opensearch_client()
@@ -88,7 +94,7 @@ async def search_assets(payload: SearchQueryRequest) -> SearchResponse:
         return SearchResponse(total=0, hits=[])
 
 
-@app.post("/search/findings", response_model=SearchResponse)
+@router.post("/search/findings", response_model=SearchResponse)
 async def search_findings(payload: SearchQueryRequest) -> SearchResponse:
     try:
         client = get_opensearch_client()
@@ -116,3 +122,6 @@ async def search_findings(payload: SearchQueryRequest) -> SearchResponse:
         return SearchResponse(total=total, hits=hits)
     except Exception as exc:
         return SearchResponse(total=0, hits=[])
+
+
+app.include_router(router)

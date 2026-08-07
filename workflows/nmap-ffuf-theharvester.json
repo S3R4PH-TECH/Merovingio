@@ -1,0 +1,302 @@
+[
+  {
+    "createdAt": "2026-08-07T13:06:00.000Z",
+    "updatedAt": "2026-08-07T13:52:00.000Z",
+    "id": "nmap-ffuf-theharvester-v1",
+    "name": "nmap-ffuf-theharvester (Parallel & Independent)",
+    "active": true,
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "nmap-ffuf-theharvester",
+          "responseMode": "onReceived",
+          "options": {}
+        },
+        "id": "webhook-trigger",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [-600, 300],
+        "webhookId": "run-nmap-ffuf-harvester",
+        "notes": "Payload esperado: { \"run_id\": \"uuid\", \"target\": \"https://alvo.com\", \"domain\": \"alvo.com\", \"ports\": \"80,443,8080\", \"wordlist\": \"Discovery/Web-Content/common.txt\" }"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://backend-gateway:8000/internal/execution-started",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ { \"run_id\": $json.body.run_id, \"execution_id\": $execution.id } }}",
+          "options": {}
+        },
+        "id": "execution-started",
+        "name": "Execution Started",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [-380, 300],
+        "credentials": { "httpHeaderAuth": { "name": "Gateway Internal Token" } }
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://backend-gateway:8000/internal/tes-lease",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ { \"tool_name\": \"net-scan\", \"run_id\": $node[\"Webhook\"].json.body.run_id, \"resume_url\": \"http://n8n-main:5678/webhook-waiting/\" + $execution.id, \"params\": {} } }}",
+          "options": {}
+        },
+        "id": "lease-net-scan",
+        "name": "Lease net-scan",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [-160, 100],
+        "credentials": { "httpHeaderAuth": { "name": "Gateway Internal Token" } }
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $node[\"Lease net-scan\"].json.tes_base_url + \"/run\" }}",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ {\n  \"target\": $node[\"Webhook\"].json.body.target,\n  \"engine\": \"nmap\",\n  \"ports\": $node[\"Webhook\"].json.body.ports ?? \"80,443,8080,8443\",\n  \"scan_types\": [\"-sV\", \"-Pn\"],\n  \"run_id\": $node[\"Webhook\"].json.body.run_id,\n  \"tool_execution_job_id\": $node[\"Lease net-scan\"].json.tool_execution_job_id,\n  \"callback_url\": \"http://backend-gateway:8000/internal/tes-callback\",\n  \"resume_url\": \"http://n8n-main:5678/webhook-waiting/\" + $execution.id,\n  \"allowed_domains\": $node[\"Lease net-scan\"].json.allowed_domains\n} }}",
+          "options": {}
+        },
+        "id": "call-net-scan",
+        "name": "Call net-scan (Nmap)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [60, 100],
+        "credentials": { "httpHeaderAuth": { "name": "net-scan Token" } },
+        "continueOnFail": true
+      },
+      {
+        "parameters": {
+          "resume": "webhook",
+          "options": { "responseCode": 200 }
+        },
+        "id": "wait-nmap",
+        "name": "Wait — Nmap",
+        "type": "n8n-nodes-base.wait",
+        "typeVersion": 1.1,
+        "position": [280, 100],
+        "webhookId": "wait-nmap"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://backend-gateway:8000/internal/tes-lease",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ { \"tool_name\": \"fuzz-svc\", \"run_id\": $node[\"Webhook\"].json.body.run_id, \"resume_url\": \"http://n8n-main:5678/webhook-waiting/\" + $execution.id, \"params\": {} } }}",
+          "options": {}
+        },
+        "id": "lease-fuzz-svc",
+        "name": "Lease fuzz-svc",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [-160, 300],
+        "credentials": { "httpHeaderAuth": { "name": "Gateway Internal Token" } }
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $node[\"Lease fuzz-svc\"].json.tes_base_url + \"/run\" }}",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ {\n  \"target\": $node[\"Webhook\"].json.body.target,\n  \"engine\": \"ffuf\",\n  \"wordlist\": $node[\"Webhook\"].json.body.wordlist ?? \"Discovery/Web-Content/common.txt\",\n  \"method\": \"GET\",\n  \"threads\": 50,\n  \"extensions\": [\"php\", \"html\", \"js\"],\n  \"follow_redirects\": true,\n  \"scope\": {\n    \"root_domains\": $node[\"Lease fuzz-svc\"].json.allowed_domains,\n    \"cidrs\": [],\n    \"out_of_scope\": []\n  },\n  \"run_id\": $node[\"Webhook\"].json.body.run_id,\n  \"tool_execution_job_id\": $node[\"Lease fuzz-svc\"].json.tool_execution_job_id,\n  \"callback_url\": \"http://backend-gateway:8000/internal/tes-callback\",\n  \"resume_url\": \"http://n8n-main:5678/webhook-waiting/\" + $execution.id\n} }}",
+          "options": {}
+        },
+        "id": "call-fuzz-svc",
+        "name": "Call fuzz-svc (ffuf)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [60, 300],
+        "credentials": { "httpHeaderAuth": { "name": "fuzz-svc Token" } },
+        "continueOnFail": true
+      },
+      {
+        "parameters": {
+          "resume": "webhook",
+          "options": { "responseCode": 200 }
+        },
+        "id": "wait-ffuf",
+        "name": "Wait — ffuf",
+        "type": "n8n-nodes-base.wait",
+        "typeVersion": 1.1,
+        "position": [280, 300],
+        "webhookId": "wait-ffuf"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://backend-gateway:8000/internal/tes-lease",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ { \"tool_name\": \"theharvester\", \"run_id\": $node[\"Webhook\"].json.body.run_id, \"resume_url\": \"http://n8n-main:5678/webhook-waiting/\" + $execution.id, \"params\": {} } }}",
+          "options": {}
+        },
+        "id": "lease-theharvester",
+        "name": "Lease theharvester",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [-160, 500],
+        "credentials": { "httpHeaderAuth": { "name": "Gateway Internal Token" } }
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $node[\"Lease theharvester\"].json.tes_base_url + \"/run\" }}",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ {\n  \"domain\": $node[\"Webhook\"].json.body.domain,\n  \"sources\": [\"certspotter\", \"crtsh\", \"dnsdumpster\", \"duckduckgo\", \"hackertarget\", \"otx\"],\n  \"run_id\": $node[\"Webhook\"].json.body.run_id,\n  \"tool_execution_job_id\": $node[\"Lease theharvester\"].json.tool_execution_job_id,\n  \"callback_url\": \"http://backend-gateway:8000/internal/tes-callback\",\n  \"resume_url\": \"http://n8n-main:5678/webhook-waiting/\" + $execution.id,\n  \"allowed_domains\": $node[\"Lease theharvester\"].json.allowed_domains\n} }}",
+          "options": {}
+        },
+        "id": "call-theharvester",
+        "name": "Call recon-runner (theHarvester)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [60, 500],
+        "credentials": { "httpHeaderAuth": { "name": "recon-runner Token" } },
+        "continueOnFail": true
+      },
+      {
+        "parameters": {
+          "resume": "webhook",
+          "options": { "responseCode": 200 }
+        },
+        "id": "wait-theharvester",
+        "name": "Wait — theHarvester",
+        "type": "n8n-nodes-base.wait",
+        "typeVersion": 1.1,
+        "position": [280, 500],
+        "webhookId": "wait-theharvester"
+      },
+      {
+        "parameters": {
+          "mode": "chooseBranch",
+          "output": "input1"
+        },
+        "id": "merge-results",
+        "name": "Merge Execution Branches",
+        "type": "n8n-nodes-base.merge",
+        "typeVersion": 3,
+        "position": [500, 300]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://backend-gateway:8000/internal/n8n-callback",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ { \"run_id\": $node[\"Webhook\"].json.body.run_id, \"execution_id\": $execution.id, \"status\": \"completed\" } }}",
+          "options": {}
+        },
+        "id": "n8n-callback-success",
+        "name": "N8n Callback (success)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [720, 300],
+        "credentials": { "httpHeaderAuth": { "name": "Gateway Internal Token" } }
+      },
+      {
+        "parameters": {},
+        "id": "error-trigger",
+        "name": "Error Trigger",
+        "type": "n8n-nodes-base.errorTrigger",
+        "typeVersion": 1,
+        "position": [-600, 700]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://backend-gateway:8000/internal/n8n-callback",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ { \"run_id\": $json.execution.variables.run_id ?? \"\", \"execution_id\": $json.execution.id, \"status\": \"failed\", \"error\": $json.error.message } }}",
+          "options": {}
+        },
+        "id": "n8n-callback-error",
+        "name": "N8n Callback (error)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [-380, 700],
+        "credentials": { "httpHeaderAuth": { "name": "Gateway Internal Token" } }
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [[{ "node": "Execution Started", "type": "main", "index": 0 }]]
+      },
+      "Execution Started": {
+        "main": [
+          [{ "node": "Lease net-scan", "type": "main", "index": 0 }],
+          [{ "node": "Lease fuzz-svc", "type": "main", "index": 0 }],
+          [{ "node": "Lease theharvester", "type": "main", "index": 0 }]
+        ]
+      },
+      "Lease net-scan": {
+        "main": [[{ "node": "Call net-scan (Nmap)", "type": "main", "index": 0 }]]
+      },
+      "Call net-scan (Nmap)": {
+        "main": [[{ "node": "Wait — Nmap", "type": "main", "index": 0 }]]
+      },
+      "Wait — Nmap": {
+        "main": [[{ "node": "Merge Execution Branches", "type": "main", "index": 0 }]]
+      },
+      "Lease fuzz-svc": {
+        "main": [[{ "node": "Call fuzz-svc (ffuf)", "type": "main", "index": 0 }]]
+      },
+      "Call fuzz-svc (ffuf)": {
+        "main": [[{ "node": "Wait — ffuf", "type": "main", "index": 0 }]]
+      },
+      "Wait — ffuf": {
+        "main": [[{ "node": "Merge Execution Branches", "type": "main", "index": 1 }]]
+      },
+      "Lease theharvester": {
+        "main": [[{ "node": "Call recon-runner (theHarvester)", "type": "main", "index": 0 }]]
+      },
+      "Call recon-runner (theHarvester)": {
+        "main": [[{ "node": "Wait — theHarvester", "type": "main", "index": 0 }]]
+      },
+      "Wait — theHarvester": {
+        "main": [[{ "node": "Merge Execution Branches", "type": "main", "index": 2 }]]
+      },
+      "Merge Execution Branches": {
+        "main": [[{ "node": "N8n Callback (success)", "type": "main", "index": 0 }]]
+      },
+      "Error Trigger": {
+        "main": [[{ "node": "N8n Callback (error)", "type": "main", "index": 0 }]]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "staticData": null,
+    "meta": {
+      "description": "Parallel Workflow: Runs Nmap, ffuf, and theHarvester concurrently and independently. Failure in one stage does not interrupt the others. Output from each tool is returned directly via its respective TES callback."
+    },
+    "pinData": null,
+    "versionId": null,
+    "triggerCount": 1,
+    "tags": []
+  }
+]

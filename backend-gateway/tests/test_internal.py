@@ -249,3 +249,66 @@ async def test_n8n_callback_error_marks_run_failed_but_keeps_partial_assets(clie
 
     asset_result = await db_session.execute(select(Asset).where(Asset.run_id == run.id))
     assert len(asset_result.scalars().all()) == 1
+
+
+# --- Scope enforcement at lease time -----------------------------------------
+#
+# The Gateway used to hand out a lease without ever checking scope, leaving
+# enforcement entirely to the TES. These cover the Gateway half of that
+# defense in depth (ARCHITECTURE_AND_ROADMAP.md, section 5, A.3).
+
+
+async def _register_tes(db_session) -> None:
+    db_session.add(TesRegistry(tool_name="theharvester", base_url="http://recon-runner:8000"))
+    await db_session.commit()
+
+
+async def _lease(client, run, **extra) -> object:
+    return await client.post(
+        "/internal/tes-lease",
+        json={"tool_name": "theharvester", "run_id": str(run.id), "params": {}, **extra},
+        headers=INTERNAL_HEADERS,
+    )
+
+
+async def test_tes_lease_accepts_in_scope_target_value(client, db_session):
+    run, _ = await _seed_run(db_session)
+    await _register_tes(db_session)
+
+    resp = await _lease(client, run, target_value="www.hackthissite.org")
+    assert resp.status_code == 200, resp.text
+
+
+async def test_tes_lease_rejects_out_of_scope_target_value(client, db_session):
+    run, _ = await _seed_run(db_session)
+    await _register_tes(db_session)
+
+    resp = await _lease(client, run, target_value="google.com")
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "domain_out_of_scope"
+
+
+async def test_tes_lease_honors_out_of_scope_veto(client, db_session):
+    """A subdomain of an in-scope root that the Target explicitly excludes must
+    be refused. A bare allowed_domains list cannot express this, which is why
+    the veto has to be applied here and not only inside the TES."""
+    run, target = await _seed_run(db_session)
+    target.out_of_scope = ["admin.hackthissite.org"]
+    await _register_tes(db_session)
+
+    resp = await _lease(client, run, target_value="admin.hackthissite.org")
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "domain_out_of_scope"
+
+
+async def test_tes_lease_fails_closed_on_unscoped_target(client, db_session):
+    """The platform ships no default scope and no scope file — an empty Target
+    is a misconfiguration to surface, never something to fall back from."""
+    run, target = await _seed_run(db_session)
+    target.root_domains = []
+    target.cidrs = []
+    await _register_tes(db_session)
+
+    resp = await _lease(client, run)
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "scope_not_configured"
