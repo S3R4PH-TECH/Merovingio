@@ -12,9 +12,8 @@ describe('parseHashRoute', () => {
     expect(parseHashRoute('#/overview')?.key).toBe('overview');
     expect(parseHashRoute('#/runs')?.key).toBe('runs');
     expect(parseHashRoute('#/active')?.key).toBe('active');
-    expect(parseHashRoute('#/scope')?.key).toBe('scope');
     expect(parseHashRoute('#/tes')?.key).toBe('tes');
-    expect(parseHashRoute('#/findings')?.key).toBe('findings');
+    expect(parseHashRoute('#/debug')?.key).toBe('debug');
   });
 
   it('tolerates a trailing slash', () => {
@@ -38,7 +37,7 @@ describe('parseHashRoute', () => {
 
 describe('routeToHash', () => {
   it('round trips through parseHashRoute', () => {
-    for (const route of ['overview', 'runs', 'active', 'scope', 'tes', 'findings'] as const) {
+    for (const route of ['overview', 'runs', 'active', 'tes', 'debug'] as const) {
       expect(parseHashRoute(routeToHash(route))?.key).toBe(route);
     }
   });
@@ -72,10 +71,19 @@ describe('useHashRoute', () => {
     const { result } = renderHook(() => useHashRoute());
 
     act(() => {
-      window.location.hash = '#/scope';
+      window.location.hash = '#/debug';
       window.dispatchEvent(new HashChangeEvent('hashchange'));
     });
 
-    expect(result.current.route.key).toBe('scope');
+    expect(result.current.route.key).toBe('debug');
+  });
+
+  it('sends a stale #/scope bookmark to the overview rather than nowhere', () => {
+    // Scope moved into All Runs, so the route is gone. parseHashRoute returns
+    // null for it, and the hook must fall back rather than render an empty
+    // shell for anyone who bookmarked the old page.
+    window.location.hash = '#/scope';
+    const { result } = renderHook(() => useHashRoute());
+    expect(result.current.route.key).toBe('overview');
   });
 });

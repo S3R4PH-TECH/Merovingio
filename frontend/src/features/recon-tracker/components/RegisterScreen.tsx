@@ -1,24 +1,7 @@
 import { useMemo, useState } from 'react';
-import { Check, Radar, X } from 'lucide-react';
-
-/** Mirrors backend-gateway's RegisterRequest validators exactly. */
-export interface PasswordRule {
-  label: string;
-  met: boolean;
-}
-
-export function checkPasswordRules(password: string): PasswordRule[] {
-  const bytes = new TextEncoder().encode(password).length;
-
-  return [
-    { label: 'At least 12 characters', met: password.length >= 12 },
-    { label: 'Contains a letter', met: /[a-zA-Z]/.test(password) },
-    { label: 'Contains a digit', met: /\d/.test(password) },
-    // bcrypt truncates past 72 bytes; the gateway rejects longer rather than
-    // letting the extra characters silently count for nothing.
-    { label: 'At most 72 bytes', met: bytes > 0 && bytes <= 72 },
-  ];
-}
+import { Check, X } from 'lucide-react';
+import { BrandMark } from './BrandMark';
+import { checkPasswordRules } from '../lib/password';
 
 interface RegisterScreenProps {
   onRegister: (email: string, password: string, name: string) => Promise<void>;
@@ -71,7 +54,7 @@ export function RegisterScreen({ onRegister, onShowLogin, error }: RegisterScree
       <form className="rt-login-card" onSubmit={handleSubmit}>
         <div className="rt-login-brand">
           <span className="rt-brand-mark" aria-hidden="true">
-            <Radar size={18} />
+            <BrandMark size={18} />
           </span>
           <span>
             <span className="rt-brand-name">Merovíngio</span>

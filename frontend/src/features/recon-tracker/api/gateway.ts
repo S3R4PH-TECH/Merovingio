@@ -48,6 +48,28 @@ export function fetchMe(): Promise<MeResponse> {
   return apiRequest<MeResponse>('/me');
 }
 
+/**
+ * Edits the caller's own profile. Omitted fields stay untouched; an empty
+ * `avatar_url` is how the gateway is told to drop the photo, since omission
+ * already means "leave it alone".
+ */
+export function updateProfile(patch: {
+  name?: string;
+  avatar_url?: string;
+}): Promise<MeResponse> {
+  return apiRequest<MeResponse>('/me', { method: 'PATCH', body: patch });
+}
+
+export function changePassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  return apiRequest<void>('/me/password', {
+    method: 'POST',
+    body: { current_password: currentPassword, new_password: newPassword },
+  });
+}
+
 // --- runs ---
 
 export function fetchRuns(): Promise<GatewayRun[]> {

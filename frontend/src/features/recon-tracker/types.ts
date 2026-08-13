@@ -25,7 +25,7 @@ export type PeriodKey = '24h' | '7d' | '30d';
 
 export type ThemeMode = 'dark' | 'light';
 
-export type RouteKey = 'overview' | 'runs' | 'active' | 'scope' | 'tes' | 'findings';
+export type RouteKey = 'overview' | 'runs' | 'active' | 'tes' | 'debug' | 'profile';
 
 export interface RunRecord {
   id: string;
@@ -139,8 +139,6 @@ export const PERIOD_LABELS: Record<PeriodKey, string> = {
   '30d': 'Last 30 days',
 };
 
-export const PROGRAMS: readonly string[] = ['All Programs', 'HackerOne', 'Internal', 'Bug Bounty'];
-
 export const ROLES: readonly string[] = ['Admin', 'Operator', 'Viewer'];
 
 // --- Wire shapes from backend-gateway (app/schema.py) ---
@@ -149,6 +147,8 @@ export interface MeResponse {
   id: string;
   email: string;
   name: string;
+  /** https URL or a `data:image/…` URI; null when the user has no photo. */
+  avatar_url?: string | null;
 }
 
 export interface GatewayRun {
@@ -161,6 +161,10 @@ export interface GatewayRun {
   started_at: string;
   finished_at?: string | null;
   params?: Record<string, unknown> | null;
+  /** Why the run failed when no TES was involved — see lib/debug.ts. */
+  error?: string | null;
+  /** The n8n node that raised `error`, when the callback named one. */
+  error_node?: string | null;
   tool_execution_jobs?: ToolExecutionJob[] | null;
   assets?: { id: string; type: string; value: string; source_tool: string }[] | null;
 }

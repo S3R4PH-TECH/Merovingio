@@ -11,7 +11,16 @@ vi.mock('../api/gateway');
 
 const NOW = new Date('2026-08-07T18:00:00.000Z');
 
-const ME = { id: 'u1', email: 'op@example.com', name: 'Alex Morgan' };
+const ME = { id: 'u1', email: 'op@example.com', name: 'Alex Morgan', avatar_url: null };
+
+// Real UUIDs, because the gateway's /runs/{run_id} route is typed `UUID` and
+// rejects anything else with a 422 before the handler runs. Placeholder ids
+// like 'run-a' made these tests pass against a request production would never
+// have accepted — the same mismatch that surfaced as "Input should be a valid
+// UUID, invalid character: found `r` at 1" on demo mode's sample runs.
+const RUN_A = '3f1c9b52-0d84-4a17-9f2e-8c6b1a2d4e50';
+const RUN_B = '7a2d4e50-9f2e-4a17-0d84-3f1c9b52c6b1';
+const RUN_C = 'c6b13f1c-4a17-9b52-0d84-8c6b1a2d4e50';
 
 const WORKFLOWS: WorkflowItem[] = [
   {
@@ -49,7 +58,7 @@ const TARGETS: TargetItem[] = [
 
 const RUNS: GatewayRun[] = [
   {
-    id: 'run-a',
+    id: RUN_A,
     workflow_definition_id: 'wf-1',
     target_id: 'tg-1',
     program_id: 'pg-1',
@@ -61,7 +70,7 @@ const RUNS: GatewayRun[] = [
     assets: [{ id: 'a1', type: 'subdomain', value: 'www.example.org', source_tool: 'theharvester' }],
   },
   {
-    id: 'run-b',
+    id: RUN_B,
     workflow_definition_id: 'wf-1',
     target_id: 'tg-1',
     program_id: 'pg-1',
@@ -81,7 +90,7 @@ beforeEach(() => {
   vi.mocked(gateway.fetchRuns).mockResolvedValue(RUNS);
   vi.mocked(gateway.fetchWorkflows).mockResolvedValue(WORKFLOWS);
   vi.mocked(gateway.fetchTargets).mockResolvedValue(TARGETS);
-  vi.mocked(gateway.triggerRun).mockResolvedValue({ run_id: 'run-c', status: 'queued' });
+  vi.mocked(gateway.triggerRun).mockResolvedValue({ run_id: RUN_C, status: 'queued' });
   vi.mocked(gateway.logout).mockImplementation(() => localStorage.removeItem('rt-token'));
 });
 
@@ -240,6 +249,23 @@ describe('overview shows what an operator opens the page for', () => {
     );
     expect(total).toHaveTextContent('2');
   });
+
+  // A bug report described the period tabs, the recent-runs panel and both
+  // charts as appearing several times over. They are each mounted once here;
+  // these assertions are what would catch it if that ever stopped being true.
+  it('draws each panel exactly once', async () => {
+    await renderApp();
+
+    expect(screen.getAllByRole('tablist', { name: /time period/i })).toHaveLength(1);
+    expect(screen.getAllByRole('region', { name: /recent & active runs/i })).toHaveLength(1);
+    expect(screen.getAllByRole('img', { name: /run volume/i })).toHaveLength(1);
+    expect(screen.getAllByRole('img', { name: /runs by tool/i })).toHaveLength(1);
+  });
+
+  it('no longer offers a program picker in the header', async () => {
+    await renderApp();
+    expect(screen.queryByRole('button', { name: /program:/i })).not.toBeInTheDocument();
+  });
 });
 
 describe('runs screens', () => {
@@ -263,11 +289,40 @@ describe('runs screens', () => {
     expect(screen.getAllByRole('button', { name: /open run/i })).toHaveLength(1);
   });
 
+  it('puts scope beside the executions on All Runs', async () => {
+    const user = userEvent.setup();
+    await renderApp();
+
+    await user.click(screen.getByRole('link', { name: 'All Runs' }));
+    await screen.findByRole('heading', { name: 'All Runs', level: 1 });
+
+    expect(screen.getByRole('heading', { name: 'Scope', level: 2 })).toBeInTheDocument();
+    // All three ways of getting hosts in are reachable from here.
+    for (const mode of [/one by one/i, /paste list/i, /upload \.txt/i]) {
+      expect(screen.getByRole('button', { name: mode })).toBeInTheDocument();
+    }
+    // Already-registered scope is visible without leaving the page.
+    const registered = within(screen.getByRole('list', { name: /registered targets/i }));
+    expect(registered.getByText('Acme production')).toBeInTheDocument();
+    // And the guardrail that used to live on the Scope page came along.
+    expect(screen.getByRole('button', { name: /check/i })).toBeInTheDocument();
+  });
+
+  it('keeps scope off Active Runs, which is for watching rather than configuring', async () => {
+    const user = userEvent.setup();
+    await renderApp();
+
+    await user.click(screen.getByRole('link', { name: 'Active Runs' }));
+    await screen.findByRole('heading', { name: 'Active Runs', level: 1 });
+
+    expect(screen.queryByRole('heading', { name: 'Scope', level: 2 })).not.toBeInTheDocument();
+  });
+
   it('opens the run detail with hosts and tool jobs', async () => {
     const user = userEvent.setup();
     vi.mocked(gateway.fetchRun).mockResolvedValue(RUNS[0]);
     vi.mocked(gateway.fetchRunHosts).mockResolvedValue({
-      run_id: 'run-a',
+      run_id: RUN_A,
       total_hosts: 1,
       hosts: [{ host: 'www.example.org', asset_count: 83, tools: ['theharvester'] }],
     });
@@ -285,7 +340,7 @@ describe('runs screens', () => {
     const user = userEvent.setup();
     vi.mocked(gateway.fetchRun).mockResolvedValue(RUNS[0]);
     vi.mocked(gateway.fetchRunHosts).mockResolvedValue({
-      run_id: 'run-a',
+      run_id: RUN_A,
       total_hosts: 1,
       hosts: [{ host: 'www.example.org', asset_count: 83, tools: ['theharvester'] }],
     });
@@ -355,5 +410,83 @@ describe('demo mode', () => {
     await waitFor(() =>
       expect(screen.queryByText('Demo Mode')).not.toBeInTheDocument(),
     );
+  });
+
+  /**
+   * Sample runs carry ids like `run-1010`, which the gateway's `/runs/{run_id}`
+   * route rejects as a malformed UUID before the handler is reached. Opening
+   * one used to relay that verbatim — "Input should be a valid UUID, invalid
+   * character: found `r` at 1" — which names neither demo mode nor the row
+   * that was clicked, and which several people read as an n8n fault.
+   */
+  it('explains a sample run instead of relaying a UUID parse error', async () => {
+    const user = userEvent.setup();
+    vi.mocked(gateway.fetchRuns).mockResolvedValue([]);
+    await renderApp();
+
+    await user.click(screen.getByRole('link', { name: 'All Runs' }));
+    const rows = await screen.findAllByRole('button', { name: /^open run/i });
+    await user.click(rows[0]);
+
+    expect(await screen.findByRole('heading', { name: /sample run/i })).toBeInTheDocument();
+    expect(screen.getByText(/only in this browser/i)).toBeInTheDocument();
+    expect(screen.queryByText(/valid uuid/i)).not.toBeInTheDocument();
+  });
+
+  it('never asks the gateway for a sample run', async () => {
+    const user = userEvent.setup();
+    vi.mocked(gateway.fetchRuns).mockResolvedValue([]);
+    await renderApp();
+
+    await user.click(screen.getByRole('link', { name: 'All Runs' }));
+    const rows = await screen.findAllByRole('button', { name: /^open run/i });
+    await user.click(rows[0]);
+
+    await screen.findByRole('heading', { name: /sample run/i });
+    expect(gateway.fetchRun).not.toHaveBeenCalled();
+    expect(gateway.fetchRunHosts).not.toHaveBeenCalled();
+  });
+});
+
+describe('the profile page', () => {
+  it('is reachable from the sidebar', async () => {
+    const user = userEvent.setup();
+    await renderApp();
+
+    await user.click(screen.getByRole('link', { name: 'Profile' }));
+
+    expect(await screen.findByRole('heading', { name: /^profile$/i })).toBeInTheDocument();
+  });
+
+  it('is filled in from the signed in account', async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await user.click(screen.getByRole('link', { name: 'Profile' }));
+
+    expect(await screen.findByLabelText(/^name$/i)).toHaveValue('Alex Morgan');
+    expect(screen.getByLabelText(/^email$/i)).toHaveValue('op@example.com');
+  });
+
+  it('sends a rename through and shows it in the sidebar', async () => {
+    const user = userEvent.setup();
+    vi.mocked(gateway.updateProfile).mockResolvedValue({ ...ME, name: 'Alex M' });
+    await renderApp();
+    await user.click(screen.getByRole('link', { name: 'Profile' }));
+
+    const field = await screen.findByLabelText(/^name$/i);
+    await user.clear(field);
+    await user.type(field, 'Alex M');
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => expect(gateway.updateProfile).toHaveBeenCalledWith({ name: 'Alex M' }));
+    // The sidebar footer reads from the same `user`, so a stale name there
+    // would mean the write never reached the shell's state.
+    expect(await screen.findByText('Alex M')).toBeInTheDocument();
+  });
+
+  it('survives a deep link straight to #/profile', async () => {
+    window.location.hash = '#/profile';
+    await renderApp();
+    expect(await screen.findByRole('heading', { name: /^profile$/i })).toBeInTheDocument();
   });
 });

@@ -1,5 +1,6 @@
-import { Crosshair, LayoutGrid, LogOut, Play, Radar, Server, ShieldAlert } from 'lucide-react';
+import { Bug, LayoutGrid, LogOut, Play, Radar, Server, UserRound } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { BrandMark } from './BrandMark';
 import { routeToHash } from '../lib/useHashRoute';
 import type { RouteKey } from '../types';
 
@@ -16,14 +17,17 @@ const SECTIONS: { title: string; entries: NavEntry[] }[] = [
       { route: 'overview', label: 'Overview', icon: LayoutGrid },
       { route: 'runs', label: 'All Runs', icon: Play },
       { route: 'active', label: 'Active Runs', icon: Radar },
-      { route: 'findings', label: 'Findings', icon: ShieldAlert },
+      { route: 'debug', label: 'Debug n8n', icon: Bug },
     ],
   },
   {
     title: 'Administration',
     entries: [
-      { route: 'scope', label: 'Scope & Targets', icon: Crosshair },
+      // Scope lives beside the executions on All Runs rather than on a page of
+      // its own — deciding what may be touched and watching what ran against
+      // it is one task, not two.
       { route: 'tes', label: 'TES Registry', icon: Server },
+      { route: 'profile', label: 'Profile', icon: UserRound },
     ],
   },
 ];
@@ -34,6 +38,8 @@ interface SidebarProps {
   onNavigate: (route: RouteKey) => void;
   onSignOut?: () => void;
   userName?: string;
+  /** Profile photo; the initial stands in when there is none. */
+  avatarUrl?: string | null;
   mobileOpen?: boolean;
 }
 
@@ -43,6 +49,7 @@ export function Sidebar({
   onNavigate,
   onSignOut,
   userName = 'Operator',
+  avatarUrl = null,
   mobileOpen = false,
 }: SidebarProps) {
   return (
@@ -54,7 +61,7 @@ export function Sidebar({
     >
       <div className="rt-brand">
         <span className="rt-brand-mark" aria-hidden="true">
-          <Radar size={18} />
+          <BrandMark size={18} />
         </span>
         <span className="rt-brand-text">
           <span className="rt-brand-name">Merovíngio</span>
@@ -93,9 +100,15 @@ export function Sidebar({
       ))}
 
       <div className="rt-sidebar-footer">
-        <span className="rt-avatar" aria-hidden="true">
-          {userName.charAt(0).toUpperCase()}
-        </span>
+        {avatarUrl ? (
+          // aria-hidden like the initial it replaces: the name is spelled out
+          // in the very next element, so announcing the photo too is noise.
+          <img className="rt-avatar-image" src={avatarUrl} alt="" aria-hidden="true" />
+        ) : (
+          <span className="rt-avatar" aria-hidden="true">
+            {userName.charAt(0).toUpperCase()}
+          </span>
+        )}
         <span className="rt-user-text">
           <span className="rt-user-name">{userName}</span>
           <span className="rt-user-role">Admin</span>

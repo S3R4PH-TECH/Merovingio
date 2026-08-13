@@ -8,14 +8,12 @@ function renderHeader(props: Partial<React.ComponentProps<typeof Header>> = {}) 
     onToggleSidebar: vi.fn(),
     onToggleTheme: vi.fn(),
     onRoleChange: vi.fn(),
-    onProgramChange: vi.fn(),
   };
   const utils = render(
     <Header
       sidebarCollapsed={false}
       theme="dark"
       role="Admin"
-      program="All Programs"
       {...handlers}
       {...props}
     />,
@@ -133,17 +131,20 @@ describe('Header', () => {
   });
 
   describe('program dropdown', () => {
-    it('shows the active program', () => {
+    // Removed from the header on request. Asserted as absent rather than
+    // deleted outright, so a re-introduction has to be deliberate.
+    it('is gone', () => {
       renderHeader();
-      expect(screen.getByRole('button', { name: /program: all programs/i })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /program:/i })).not.toBeInTheDocument();
     });
 
-    it('reports the chosen program', async () => {
-      const user = userEvent.setup();
-      const { onProgramChange } = renderHeader();
-      await user.click(screen.getByRole('button', { name: /program: all programs/i }));
-      await user.click(screen.getByRole('option', { name: 'Internal' }));
-      expect(onProgramChange).toHaveBeenCalledWith('Internal');
+    it('leaves the role dropdown as the only listbox trigger', () => {
+      renderHeader();
+      const triggers = screen
+        .getAllByRole('button')
+        .filter(button => button.getAttribute('aria-haspopup') === 'listbox');
+      expect(triggers).toHaveLength(1);
+      expect(triggers[0]).toHaveAccessibleName(/role: admin/i);
     });
   });
 });

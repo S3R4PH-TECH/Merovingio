@@ -92,6 +92,12 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(320), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Profile photo as a URL, either an ordinary https one or a `data:image/…`
+    # URI holding a small picture inline. The platform has no object store and
+    # the gateway serves no user uploads, so inlining is what lets someone
+    # actually pick a file from disk. Text, not String(n): a data URI is
+    # thousands of characters. NULL means "fall back to initials".
+    avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=_now)
 
     workspace_memberships: Mapped[list["WorkspaceMembership"]] = relationship(back_populates="user")
@@ -241,6 +247,17 @@ class Run(Base):
     finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
     params: Mapped[dict] = mapped_column(JSON, default=dict)
     data_versions: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Why this Run failed, when the failure happened outside a TES.
+    # ToolExecutionJob.error already covers "the tool itself errored", but the
+    # two failures that never reach a TES had nowhere to be recorded: n8n
+    # aborting mid-workflow (N8nCallbackRequest carried a bare status) and the
+    # Gateway being unable to reach the production webhook at all. Both used to
+    # surface as an unexplained "failed" and forced the operator into the n8n
+    # editor to learn anything.
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The n8n node that raised it. Not derivable from the message, and the
+    # first thing anyone debugging a workflow wants to know.
+    error_node: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
     tool_execution_jobs: Mapped[list["ToolExecutionJob"]] = relationship(back_populates="run")
     assets: Mapped[list["Asset"]] = relationship(back_populates="run")

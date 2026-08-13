@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Radar } from 'lucide-react';
+import { BrandMark } from './BrandMark';
 
 interface LoginScreenProps {
   onSignIn: (email: string, password: string) => Promise<void>;
@@ -30,7 +30,7 @@ export function LoginScreen({ onSignIn, onShowRegister, error }: LoginScreenProp
       <form className="rt-login-card" onSubmit={handleSubmit}>
         <div className="rt-login-brand">
           <span className="rt-brand-mark" aria-hidden="true">
-            <Radar size={18} />
+            <BrandMark size={18} />
           </span>
           <span>
             <span className="rt-brand-name">Merovíngio</span>

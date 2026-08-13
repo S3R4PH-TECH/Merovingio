@@ -117,6 +117,13 @@ async def trigger_run(
             )
         except httpx.HTTPError as exc:
             run.status = "failed"
+            # The caller gets this as a 502, but the Run outlives the request —
+            # and a Run that failed here never reached n8n at all, so there is
+            # no execution to open in the editor. Recording the reason is the
+            # only way the debug screen can tell "n8n rejected it" apart from
+            # "n8n was never asked".
+            run.error = f"Gateway could not reach the n8n production webhook: {exc}"
+            run.error_node = "n8n production webhook"
             await db.commit()
             raise HTTPException(status_code=502, detail=f"failed_to_trigger_workflow: {exc}") from exc
 

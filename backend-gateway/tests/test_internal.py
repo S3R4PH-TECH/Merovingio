@@ -251,6 +251,119 @@ async def test_n8n_callback_error_marks_run_failed_but_keeps_partial_assets(clie
     assert len(asset_result.scalars().all()) == 1
 
 
+# --- What n8n actually sends -------------------------------------------------
+#
+# The status vocabulary here is not hypothetical: it is what the three exports
+# in workflows/ post today. `status` was Literal["success", "error"], so every
+# one of the spellings below was rejected with a 422 — and the failure was
+# silent in the worst direction, because the Run then simply never left
+# "running" and the message n8n had already put in the request body was
+# discarded by the validator before any handler saw it.
+
+
+async def test_n8n_callback_accepts_the_failed_spelling_the_error_workflow_sends(
+    client, db_session
+):
+    """Both Error Workflow nodes in workflows/ post status="failed".
+
+    Until this was accepted, an execution could abort inside n8n and the
+    platform would show the Run as still running, forever, with no reason
+    recorded anywhere.
+    """
+    run, _ = await _seed_run(db_session)
+
+    resp = await client.post(
+        "/internal/n8n-callback",
+        json={
+            "run_id": str(run.id),
+            "execution_id": "n8n-exec-9",
+            "status": "failed",
+            "error": "Cannot read properties of undefined (reading 'hosts')",
+            "error_node": "Split subdomains",
+        },
+        headers=INTERNAL_HEADERS,
+    )
+    assert resp.status_code == 200
+
+    await db_session.refresh(run)
+    assert run.status == "failed"
+    assert run.error == "Cannot read properties of undefined (reading 'hosts')"
+    assert run.error_node == "Split subdomains"
+
+
+async def test_n8n_callback_accepts_the_completed_spelling(client, db_session):
+    """nmap-ffuf-theharvester's success node posts status="completed"."""
+    run, _ = await _seed_run(db_session)
+
+    resp = await client.post(
+        "/internal/n8n-callback",
+        json={"run_id": str(run.id), "execution_id": "n8n-exec-10", "status": "completed"},
+        headers=INTERNAL_HEADERS,
+    )
+    assert resp.status_code == 200
+
+    await db_session.refresh(run)
+    assert run.status == "success"
+
+
+async def test_n8n_callback_records_a_failure_with_no_message(client, db_session):
+    """A workflow that reports only a status is still a failure worth
+    recording — the debug screen tells the operator to add `error` to the
+    callback, which it can only do if the Run is marked failed at all."""
+    run, _ = await _seed_run(db_session)
+
+    await client.post(
+        "/internal/n8n-callback",
+        json={"run_id": str(run.id), "status": "error"},
+        headers=INTERNAL_HEADERS,
+    )
+
+    await db_session.refresh(run)
+    assert run.status == "failed"
+    assert run.error is None
+
+
+async def test_n8n_callback_clears_a_previous_error_on_success(client, db_session):
+    """A retried execution that now succeeds must not keep showing the
+    previous attempt's error on the debug screen."""
+    run, _ = await _seed_run(db_session)
+
+    await client.post(
+        "/internal/n8n-callback",
+        json={"run_id": str(run.id), "status": "error", "error": "first attempt blew up"},
+        headers=INTERNAL_HEADERS,
+    )
+    await client.post(
+        "/internal/n8n-callback",
+        json={"run_id": str(run.id), "status": "success"},
+        headers=INTERNAL_HEADERS,
+    )
+
+    await db_session.refresh(run)
+    assert run.status == "success"
+    assert run.error is None
+    assert run.error_node is None
+
+
+async def test_n8n_callback_pairs_the_execution_id_when_the_first_node_never_did(
+    client, db_session
+):
+    """/internal/execution-started is the normal pairing point, but a workflow
+    missing that node still reports an execution_id here — and without it
+    nobody can open the failing execution in the n8n editor."""
+    run, _ = await _seed_run(db_session)
+    assert run.n8n_execution_id is None
+
+    await client.post(
+        "/internal/n8n-callback",
+        json={"run_id": str(run.id), "execution_id": "n8n-exec-11", "status": "error"},
+        headers=INTERNAL_HEADERS,
+    )
+
+    await db_session.refresh(run)
+    assert run.n8n_execution_id == "n8n-exec-11"
+
+
 # --- Scope enforcement at lease time -----------------------------------------
 #
 # The Gateway used to hand out a lease without ever checking scope, leaving

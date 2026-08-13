@@ -181,7 +181,7 @@ export function NewRunModal({
               </select>
               {targets.length === 0 && (
                 <p className="rt-field-warn">
-                  No targets registered. Add one under Scope &amp; Targets first.
+                  No targets registered. Add one from the Scope panel on All Runs first.
                 </p>
               )}
             </div>

@@ -37,3 +37,16 @@ export function formatDuration(startIso: string, endIso?: string, now: Date = ne
 export function shortId(id: string): string {
   return id.length > 8 ? `${id.slice(0, 8)}…` : id;
 }
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Every id the gateway issues is a UUID, and every `/runs/{id}` route declares
+ * `run_id: UUID`. Anything else is a 422 before the handler is ever reached —
+ * which is exactly what demo mode's sample ids (`run-1010`) produced, as
+ * "Input should be a valid UUID, invalid character: found `r` at 1". Checking
+ * first is what lets a screen explain that instead of relaying it.
+ */
+export function isUuid(value: string): boolean {
+  return UUID_PATTERN.test(value);
+}

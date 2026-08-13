@@ -5,9 +5,9 @@ const ROUTES: readonly RouteKey[] = [
   'overview',
   'runs',
   'active',
-  'scope',
   'tes',
-  'findings',
+  'debug',
+  'profile',
 ];
 
 const DEFAULT_ROUTE: RouteKey = 'overview';

@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
-import { ArrowLeft, Download, FileText, Server, TriangleAlert } from 'lucide-react';
+import { ArrowLeft, Download, FileText, FlaskConical, Server, TriangleAlert } from 'lucide-react';
 import { ApiError } from '../api/client';
 import { downloadRunZip, fetchHostOutput, fetchRun, fetchRunHosts } from '../api/gateway';
 import { StatusPill } from '../components/StatusPill';
-import { formatDuration, formatWhen, shortId } from '../lib/format';
+import { formatDuration, formatWhen, isUuid, shortId } from '../lib/format';
 import type { GatewayRun, RunHosts } from '../types';
 
 interface RunDetailScreenProps {
@@ -17,12 +17,31 @@ export function RunDetailScreen({ runId, onBack }: RunDetailScreenProps) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  /**
+   * Demo mode fills the dashboard with sample runs whose ids are `run-1010`,
+   * not UUIDs. Their rows are clickable like any other, and following one used
+   * to reach GET /runs/run-1010 — where FastAPI rejects the path parameter
+   * before the handler runs and answers "Input should be a valid UUID,
+   * invalid character: found `r` at 1". Nothing in that sentence tells an
+   * operator that they clicked a sample row, and nothing about it involves n8n.
+   */
+  const isSample = !isUuid(runId);
+
   const [openHost, setOpenHost] = useState<string | null>(null);
   const [outputText, setOutputText] = useState<string>('');
   const [outputLoading, setOutputLoading] = useState(false);
 
   useEffect(() => {
     let active = true;
+
+    if (isSample) {
+      setRun(null);
+      setHosts(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
 
     Promise.all([fetchRun(runId), fetchRunHosts(runId).catch(() => null)])
@@ -43,7 +62,7 @@ export function RunDetailScreen({ runId, onBack }: RunDetailScreenProps) {
     return () => {
       active = false;
     };
-  }, [runId]);
+  }, [runId, isSample]);
 
   const openOutput = async (host: string) => {
     setOpenHost(host);
@@ -93,7 +112,29 @@ export function RunDetailScreen({ runId, onBack }: RunDetailScreenProps) {
         </p>
       )}
 
-      {loading ? (
+      {isSample ? (
+        <section className="rt-card rt-panel" aria-labelledby="rt-run-sample">
+          <div className="rt-card-header">
+            <div>
+              <h2 className="rt-card-title" id="rt-run-sample">
+                Sample run — nothing to open
+              </h2>
+              <p className="rt-card-subtitle">
+                Demo mode is on, so the dashboard is showing example data
+              </p>
+            </div>
+          </div>
+          <p className="rt-placeholder">
+            <FlaskConical size={18} aria-hidden="true" />
+            <br />
+            <code>{runId}</code> is one of the sample runs the dashboard falls back to while
+            the gateway has no runs of its own. It exists only in this browser — there is no
+            execution, no host output and no n8n run behind it.
+            <br />
+            Dispatch a workflow from Overview and its detail will open here.
+          </p>
+        </section>
+      ) : loading ? (
         <p className="rt-placeholder">Loading run…</p>
       ) : run ? (
         <>

@@ -30,7 +30,7 @@ import httpx
 from app.db import get_db
 from app.http_client import get_http_client
 from app.internal_auth import require_internal_token
-from app.models import Asset, Run, Target, TesRegistry, ToolExecutionJob
+from app.models import Asset, Run, Target, TesRegistry, ToolExecutionJob, WorkflowDefinition
 from app.schema import (
     ExecutionStartedRequest,
     N8nCallbackRequest,
@@ -226,15 +226,30 @@ async def n8n_callback(payload: N8nCallbackRequest, db: AsyncSession = Depends(g
     jobs = jobs_result.scalars().all()
     non_terminal = [j for j in jobs if j.status not in ("done", "error")]
 
-    if payload.status == "error":
+    # Last chance to pair our Run with n8n's execution. Normally
+    # /internal/execution-started does it, but when that first node is missing
+    # or never ran, this callback carries the only execution_id we will ever
+    # see — and without it nobody can find the execution in the n8n editor.
+    if payload.execution_id and not run.n8n_execution_id:
+        run.n8n_execution_id = payload.execution_id
+
+    if payload.failed:
         run.status = "failed"
+        run.error = payload.error
+        run.error_node = payload.error_node
     elif non_terminal:
         # n8n reported success but some ToolExecutionJob never called back —
         # exactly the "callback perdido" case the roadmap flags (section
         # 10): surface it instead of silently marking the Run green.
         run.status = "completed_with_warnings"
+        run.error = None
+        run.error_node = None
     else:
         run.status = "success"
+        # A retried execution that now succeeds must not keep showing the
+        # previous attempt's error on the debug screen.
+        run.error = None
+        run.error_node = None
 
     run.finished_at = datetime.now(timezone.utc)
     await db.commit()

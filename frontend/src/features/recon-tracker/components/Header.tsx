@@ -1,27 +1,23 @@
 import { Moon, PanelLeft, Sun } from 'lucide-react';
 import { Dropdown } from './Dropdown';
-import { ROLES, PROGRAMS, type ThemeMode } from '../types';
+import { ROLES, type ThemeMode } from '../types';
 
 interface HeaderProps {
   sidebarCollapsed: boolean;
   theme: ThemeMode;
   role: string;
-  program: string;
   onToggleSidebar: () => void;
   onToggleTheme: () => void;
   onRoleChange: (role: string) => void;
-  onProgramChange: (program: string) => void;
 }
 
 export function Header({
   sidebarCollapsed,
   theme,
   role,
-  program,
   onToggleSidebar,
   onToggleTheme,
   onRoleChange,
-  onProgramChange,
 }: HeaderProps) {
   const nextTheme = theme === 'dark' ? 'light' : 'dark';
 
@@ -60,13 +56,6 @@ export function Header({
         value={role}
         onChange={onRoleChange}
         showStatusDot
-      />
-
-      <Dropdown
-        triggerLabel={`Program: ${program}`}
-        options={PROGRAMS.map(value => ({ value, label: value }))}
-        value={program}
-        onChange={onProgramChange}
       />
     </header>
   );

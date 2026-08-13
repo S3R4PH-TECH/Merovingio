@@ -1048,6 +1048,9 @@
 }
 
 .rt-field-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin: 0;
   font-size: 12px;
   color: var(--rt-status-failed);
@@ -1609,30 +1612,11 @@
   margin-bottom: var(--rt-space-4);
 }
 
-.rt-form-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--rt-space-4);
-  padding: var(--rt-space-5) var(--rt-space-5) 0;
-}
-
 .rt-form-actions {
-  grid-column: 1 / -1;
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: var(--rt-space-3);
-}
-
-.rt-inline-form {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--rt-space-3);
-  padding: var(--rt-space-5) var(--rt-space-5) 0;
-}
-
-.rt-grow {
-  flex: 1;
 }
 
 .rt-count {
@@ -1652,7 +1636,7 @@
 }
 
 .rt-scope-result {
-  margin: var(--rt-space-4) var(--rt-space-5) 0;
+  margin: var(--rt-space-3) 0 0;
   padding: var(--rt-space-3) var(--rt-space-4);
   border-radius: var(--rt-radius-md);
   font-size: 13px;
@@ -1665,6 +1649,299 @@
 .rt-scope-result[data-in-scope='true'] {
   border-color: var(--rt-status-success);
   color: var(--rt-accent-text);
+}
+
+/* --------------------------------------------------- all runs · scope split */
+
+/*
+  The executions table takes the flexible column and scope a fixed one: the
+  table has seven columns and will use whatever it is given, while the panel
+  is a form whose fields stop getting more readable past ~380px.
+
+  Only below 1280px does this stack. Splitting earlier would leave the runs
+  table narrower than its own content and force horizontal scrolling on the
+  thing the page is named after.
+*/
+.rt-runs-split[data-split='true'] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--rt-space-5);
+  align-items: start;
+}
+
+@media (min-width: 1280px) {
+  .rt-runs-split[data-split='true'] {
+    grid-template-columns: minmax(0, 1fr) 380px;
+  }
+}
+
+/* The panel owns the column, so the shared bottom margin would only add a
+   gap the grid already provides. */
+.rt-scope-panel {
+  margin-bottom: 0;
+}
+
+.rt-scope-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rt-space-4);
+  padding: var(--rt-space-5) var(--rt-space-5) 0;
+}
+
+.rt-scope-form .rt-form-actions {
+  grid-column: auto;
+  flex-wrap: wrap;
+}
+
+.rt-field-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--rt-text-dim);
+}
+
+.rt-textarea-sm {
+  min-height: 56px;
+}
+
+.rt-field-warn-inline {
+  color: var(--rt-status-warning);
+}
+
+/* --- injection mode switch --- */
+
+.rt-scope-modes {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--rt-border);
+  border-radius: var(--rt-radius-md);
+  background: var(--rt-surface-3);
+}
+
+.rt-scope-mode {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 7px 6px;
+  border: none;
+  border-radius: var(--rt-radius-sm);
+  background: none;
+  color: var(--rt-text-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--rt-dur-fast) var(--rt-ease-in-out),
+    color var(--rt-dur-fast) var(--rt-ease-in-out);
+}
+
+.rt-scope-mode:hover {
+  color: var(--rt-text);
+}
+
+.rt-scope-mode[data-active='true'] {
+  background: var(--rt-surface);
+  color: var(--rt-text);
+  box-shadow: var(--rt-shadow-sm);
+}
+
+.rt-scope-single {
+  display: flex;
+  gap: var(--rt-space-2);
+}
+
+.rt-scope-single .rt-input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* A file input renders its own button, so the shared field height and centre
+   alignment of .rt-input would clip it. */
+.rt-scope-file {
+  height: auto;
+  padding: var(--rt-space-2) var(--rt-space-3);
+  font-size: 12px;
+}
+
+.rt-scope-file-note {
+  color: var(--rt-accent-text);
+}
+
+/* --- staged hosts --- */
+
+.rt-scope-staged-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--rt-space-3);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--rt-text-muted);
+}
+
+.rt-scope-chips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.rt-scope-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px 3px 6px;
+  border: 1px solid var(--rt-border);
+  border-radius: var(--rt-radius-full);
+  background: var(--rt-surface-3);
+  font-size: 12px;
+  max-width: 100%;
+}
+
+/*
+  The badge says which of the Target's two fields the entry is headed for, in
+  text rather than by colour alone — an operator who cannot distinguish the
+  border colours still reads DOM, NET or the rejection mark.
+*/
+.rt-scope-chip-kind {
+  padding: 1px 5px;
+  border-radius: var(--rt-radius-full);
+  background: var(--rt-surface-4);
+  color: var(--rt-text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.rt-scope-chip[data-kind='invalid'] {
+  border-color: var(--rt-status-failed);
+}
+
+.rt-scope-chip[data-kind='invalid'] .rt-scope-chip-kind {
+  color: var(--rt-status-failed);
+}
+
+.rt-scope-chip[data-kind='invalid'] .rt-scope-chip-value {
+  text-decoration: line-through;
+  color: var(--rt-text-muted);
+}
+
+.rt-scope-chip-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--rt-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rt-scope-chip-remove {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: var(--rt-radius-full);
+  background: none;
+  color: var(--rt-text-dim);
+  cursor: pointer;
+}
+
+.rt-scope-chip-remove:hover {
+  background: var(--rt-surface-4);
+  color: var(--rt-status-failed);
+}
+
+/* --- registered targets summary --- */
+
+.rt-scope-registered {
+  margin-top: var(--rt-space-5);
+  padding: var(--rt-space-4) var(--rt-space-5) 0;
+  border-top: 1px solid var(--rt-border);
+}
+
+.rt-scope-registered-head {
+  margin: 0 0 var(--rt-space-3);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--rt-text-muted);
+}
+
+.rt-scope-target-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--rt-space-2);
+}
+
+.rt-scope-target {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--rt-space-2);
+  padding: var(--rt-space-2) var(--rt-space-3);
+  border-radius: var(--rt-radius-sm);
+  background: var(--rt-surface-3);
+}
+
+.rt-scope-target-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rt-scope-target-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--rt-text);
+}
+
+.rt-scope-target-scope {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--rt-text-muted);
+  word-break: break-word;
+}
+
+.rt-scope-target-out {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--rt-status-failed);
+  word-break: break-word;
+}
+
+/* --- scope check --- */
+
+.rt-scope-check {
+  margin-top: var(--rt-space-5);
+  padding: var(--rt-space-4) var(--rt-space-5) 0;
+  border-top: 1px solid var(--rt-border);
+}
+
+/* Stacked rather than the inline row the full-width page could afford: in a
+   380px column a select, a text field and a button side by side leave none of
+   them usable. */
+.rt-scope-check-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rt-space-3);
+}
+
+.rt-scope-check-form .rt-btn-ghost {
+  align-self: flex-start;
 }
 
 /* ----------------------------------------------------------------- tables */
@@ -1887,16 +2164,16 @@
   word-break: break-word;
 }
 
-/* --------------------------------------------------------------- findings */
+/* --------------------------------------------------------------- debug n8n */
 
-.rt-sev-grid {
+.rt-dbg-facets {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--rt-space-3);
   margin-bottom: var(--rt-space-6);
 }
 
-.rt-sev-card {
+.rt-dbg-facet {
   display: flex;
   align-items: center;
   gap: var(--rt-space-2);
@@ -1907,23 +2184,22 @@
   color: var(--rt-text-muted);
 }
 
-.rt-sev-card[data-active='true'] {
+.rt-dbg-facet[data-active='true'] {
   border-color: var(--rt-accent);
 }
 
-.rt-sev-dot {
+.rt-dbg-facet-dot {
   width: 9px;
   height: 9px;
   border-radius: var(--rt-radius-full);
   flex-shrink: 0;
 }
 
-.rt-sev-label {
+.rt-dbg-facet-label {
   font-size: 12px;
-  text-transform: capitalize;
 }
 
-.rt-sev-value {
+.rt-dbg-facet-value {
   margin-left: auto;
   font-size: 18px;
   font-weight: 700;
@@ -1931,17 +2207,207 @@
   font-variant-numeric: tabular-nums;
 }
 
+.rt-dbg-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rt-space-3);
+  padding: var(--rt-space-4) var(--rt-space-5) var(--rt-space-5);
+}
+
+/*
+  The left edge carries the verdict, so a screenful of executions can be
+  triaged without reading any of them. Colour is never the only signal — the
+  status pill and each issue's own icon and label repeat it in text.
+*/
+.rt-dbg-exec {
+  border: 1px solid var(--rt-border);
+  border-left: 3px solid var(--rt-status-queued);
+  border-radius: var(--rt-radius-md);
+  background: var(--rt-surface-3);
+  padding: var(--rt-space-4);
+}
+
+.rt-dbg-exec[data-level='error'] {
+  border-left-color: var(--rt-status-failed);
+}
+
+.rt-dbg-exec[data-level='warning'] {
+  border-left-color: var(--rt-status-warning);
+}
+
+.rt-dbg-exec[data-level='ok'] {
+  border-left-color: var(--rt-status-success);
+}
+
+.rt-dbg-exec-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--rt-space-4);
+  flex-wrap: wrap;
+}
+
+.rt-dbg-exec-ident {
+  min-width: 0;
+}
+
+.rt-dbg-exec-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--rt-text);
+}
+
+.rt-dbg-exec-sub {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--rt-space-2);
+  margin: 5px 0 0;
+  font-size: 12px;
+  color: var(--rt-text-muted);
+}
+
+.rt-dbg-execid {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.rt-dbg-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border: 1px solid var(--rt-border-strong);
+  border-radius: var(--rt-radius-sm);
+  background: none;
+  color: var(--rt-text-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.rt-dbg-copy:hover {
+  color: var(--rt-text);
+  border-color: var(--rt-accent);
+}
+
+.rt-dbg-exec-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--rt-space-3);
+  flex-shrink: 0;
+}
+
+.rt-dbg-exec-time {
+  font-size: 12px;
+  color: var(--rt-text-dim);
+  white-space: nowrap;
+}
+
+.rt-dbg-issues {
+  list-style: none;
+  margin: var(--rt-space-3) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--rt-space-2);
+}
+
+.rt-dbg-issue {
+  display: flex;
+  gap: var(--rt-space-3);
+  padding: var(--rt-space-3);
+  border-radius: var(--rt-radius-sm);
+  background: var(--rt-surface);
+}
+
+.rt-dbg-issue-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.rt-dbg-issue[data-level='error'] .rt-dbg-issue-icon {
+  color: var(--rt-status-failed);
+}
+
+.rt-dbg-issue[data-level='warning'] .rt-dbg-issue-icon {
+  color: var(--rt-status-warning);
+}
+
+.rt-dbg-issue-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.rt-dbg-issue-head {
+  display: flex;
+  align-items: center;
+  gap: var(--rt-space-2);
+  margin: 0;
+}
+
+.rt-dbg-issue-kind {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--rt-text);
+}
+
+.rt-dbg-issue-tool {
+  padding: 1px 7px;
+  border-radius: var(--rt-radius-full);
+  background: var(--rt-surface-4);
+  color: var(--rt-text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+/*
+  Verbatim, and never collapsed to one line: this is the tool's own output,
+  and a stack trace reflowed into a paragraph cannot be pasted anywhere useful.
+*/
+.rt-dbg-issue-message {
+  margin: 6px 0 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--rt-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.rt-dbg-issue-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--rt-text-muted);
+}
+
+.rt-dbg-clean {
+  display: flex;
+  align-items: center;
+  gap: var(--rt-space-2);
+  margin: var(--rt-space-3) 0 0;
+  font-size: 12px;
+  color: var(--rt-text-dim);
+}
+
+.rt-dbg-toggle {
+  margin-top: var(--rt-space-3);
+}
+
+.rt-dbg-params {
+  margin-left: 0;
+  margin-right: 0;
+  max-height: 240px;
+}
+
 @media (max-width: 1023px) {
-  .rt-form-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .rt-inline-form {
-    flex-wrap: wrap;
-  }
-
-  .rt-sev-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+  .rt-dbg-facets {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -1985,4 +2451,114 @@
    itself is what a colour-blind user reads (WCAG 1.4.1). */
 .rt-rule[data-met='true'] {
   color: var(--rt-accent-text);
+}
+
+/* --- Profile ------------------------------------------------------------ */
+
+.rt-profile-identity {
+  display: grid;
+  /* The photo column is sized to its content so the form takes the rest;
+     below 720px they stack rather than squeezing the inputs to nothing. */
+  grid-template-columns: minmax(0, 220px) minmax(0, 1fr);
+  gap: var(--rt-space-6);
+  align-items: start;
+}
+
+@media (max-width: 720px) {
+  .rt-profile-identity {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.rt-profile-photo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--rt-space-3);
+  text-align: center;
+}
+
+.rt-profile-avatar {
+  width: 96px;
+  height: 96px;
+  border-radius: var(--rt-radius-full);
+  border: 1px solid var(--rt-border);
+  object-fit: cover;
+  background: var(--rt-surface-4);
+}
+
+.rt-profile-avatar-empty {
+  display: grid;
+  place-items: center;
+  color: var(--rt-text);
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.rt-profile-photo-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--rt-space-2);
+}
+
+/* A label wrapping a hidden file input: it has to look and behave like the
+   ghost buttons beside it, which are <button>s. */
+.rt-profile-upload {
+  cursor: pointer;
+}
+
+.rt-profile-upload:focus-within {
+  outline: 2px solid var(--rt-accent);
+  outline-offset: 2px;
+}
+
+.rt-profile-photo-hint {
+  margin: 0;
+  max-width: 22ch;
+  font-size: 12px;
+  color: var(--rt-text-dim);
+}
+
+.rt-profile-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rt-space-4);
+  align-items: flex-start;
+}
+
+.rt-profile-form .rt-field {
+  width: 100%;
+}
+
+.rt-profile-form .rt-input[readonly] {
+  color: var(--rt-text-muted);
+  cursor: not-allowed;
+}
+
+.rt-field-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--rt-text-dim);
+}
+
+/* Paired with an icon in the markup, never colour on its own. */
+.rt-field-ok {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--rt-accent-text);
+}
+
+/* The sidebar footer shows the same photo, so the identity is visible from
+   every screen rather than only on the profile page. */
+.rt-avatar-image {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--rt-radius-full);
+  object-fit: cover;
+  flex-shrink: 0;
 }

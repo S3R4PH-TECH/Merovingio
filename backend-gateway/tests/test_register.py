@@ -4,8 +4,9 @@ Tests for POST /auth/register.
 The platform deliberately shipped without a signup endpoint (see app/auth.py
 and scripts/seed_user.py): users were seeded out of band. Adding one changes
 the security posture of a platform that can launch offensive tooling, so the
-endpoint is gated behind GATEWAY_ALLOW_REGISTRATION and carries a real
-password policy — neither of which the login path needed.
+endpoint is gated behind GATEWAY_ALLOW_REGISTRATION and carries the password
+composition rules — neither of which the login path needed. The minimum
+length is deliberately not among those rules any more.
 
 Same convention as the rest of the suite: real Postgres, never mocked.
 """
@@ -98,8 +99,15 @@ async def test_register_rejects_a_malformed_email(client, db_session):
     assert resp.status_code == 422
 
 
-async def test_register_rejects_a_short_password(client, db_session):
+async def test_register_accepts_a_short_password(client, db_session):
+    # The 12-character floor was removed on request; only the composition rules
+    # and the bcrypt ceiling still gate a signup.
     resp = await _register(client, password="Short1!")
+    assert resp.status_code == 201, resp.text
+
+
+async def test_register_rejects_an_empty_password(client, db_session):
+    resp = await _register(client, password="")
     assert resp.status_code == 422
 
 

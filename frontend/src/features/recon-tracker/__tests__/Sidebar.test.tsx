@@ -35,9 +35,9 @@ describe('Sidebar', () => {
       'Overview',
       'All Runs',
       'Active Runs',
-      'Findings',
-      'Scope & Targets',
+      'Debug n8n',
       'TES Registry',
+      'Profile',
     ]) {
       expect(screen.getByRole('link', { name: label })).toBeInTheDocument();
     }
@@ -69,7 +69,7 @@ describe('Sidebar', () => {
 
   it('keeps accessible names for every entry when collapsed', () => {
     renderSidebar({ collapsed: true });
-    for (const label of ['Overview', 'All Runs', 'Scope & Targets']) {
+    for (const label of ['Overview', 'All Runs', 'TES Registry']) {
       expect(screen.getByRole('link', { name: label })).toBeInTheDocument();
     }
   });
@@ -87,5 +87,33 @@ describe('Sidebar', () => {
     expect(screen.getByText('Operator')).toBeInTheDocument();
     expect(screen.getByText('Admin')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /log ?out/i })).toBeInTheDocument();
+  });
+
+  it('reaches the profile page', async () => {
+    const user = userEvent.setup();
+    const { onNavigate } = renderSidebar();
+    await user.click(screen.getByRole('link', { name: 'Profile' }));
+    expect(onNavigate).toHaveBeenCalledWith('profile');
+  });
+
+  describe('the user photo', () => {
+    it('falls back to an initial when there is none', () => {
+      renderSidebar({ userName: 'Alex Morgan' });
+      expect(screen.getByText('A')).toBeInTheDocument();
+    });
+
+    it('shows the photo once the account has one', () => {
+      const { container } = renderSidebar({
+        userName: 'Alex Morgan',
+        avatarUrl: 'https://cdn.example.org/alex.png',
+      });
+
+      const photo = container.querySelector('.rt-avatar-image');
+      expect(photo).toHaveAttribute('src', 'https://cdn.example.org/alex.png');
+      // Decorative: the name is spelled out in the element right beside it, so
+      // announcing the photo as well would only repeat it.
+      expect(photo).toHaveAttribute('alt', '');
+      expect(screen.queryByText('A')).not.toBeInTheDocument();
+    });
   });
 });

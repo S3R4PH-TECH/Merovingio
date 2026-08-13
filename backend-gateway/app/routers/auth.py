@@ -17,7 +17,14 @@ from app.auth import (
 )
 from app.db import get_db
 from app.models import User
-from app.schema import LoginRequest, MeResponse, RegisterRequest, TokenResponse
+from app.schema import (
+    LoginRequest,
+    MeResponse,
+    PasswordChangeRequest,
+    ProfileUpdateRequest,
+    RegisterRequest,
+    TokenResponse,
+)
 
 router = APIRouter(tags=["auth"])
 
@@ -103,6 +110,98 @@ async def login(
     return TokenResponse(access_token=create_access_token(user.id))
 
 
+def _me(user: User) -> MeResponse:
+    return MeResponse(
+        id=user.id,
+        email=user.email,
+        name=user.name,
+        avatar_url=user.avatar_url,
+    )
+
+
 @router.get("/me", response_model=MeResponse)
 async def me(current_user: User = Depends(get_current_user)) -> MeResponse:
-    return MeResponse(id=current_user.id, email=current_user.email, name=current_user.name)
+    return _me(current_user)
+
+
+@router.patch("/me", response_model=MeResponse)
+async def update_me(
+    payload: ProfileUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> MeResponse:
+    """Edit the caller's own profile — never anyone else's.
+
+    There is no user id in the path for that reason: the only account this
+    endpoint can reach is the one the presented token belongs to, so no amount
+    of parameter tampering turns it into an admin tool.
+    """
+    if payload.name is not None:
+        current_user.name = payload.name
+    if payload.avatar_url is not None:
+        # "" is the UI's way of clearing the photo; the column stores that
+        # absence as NULL, which is what the initials fallback keys off.
+        current_user.avatar_url = payload.avatar_url or None
+
+    await audit_record(
+        db,
+        actor_user_id=current_user.id,
+        action="user.profile_update",
+        resource_type="user",
+        resource_id=current_user.id,
+        # The avatar itself is never logged — a data URI would put an entire
+        # image in the audit trail. Only whether one is now set.
+        payload={
+            "name_changed": payload.name is not None,
+            "avatar_set": bool(current_user.avatar_url),
+        },
+    )
+    await db.commit()
+    await db.refresh(current_user)
+
+    return _me(current_user)
+
+
+# response_model=None is load-bearing, not decoration: this module runs under
+# `from __future__ import annotations`, so FastAPI reads the `-> None` return
+# annotation back as the NoneType *class* and treats it as a response model —
+# which a 204 is forbidden to have, and the app refuses to import.
+@router.post("/me/password", status_code=204, response_model=None)
+async def change_password(
+    payload: PasswordChangeRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Change the caller's own password.
+
+    Rate limited on the same bucket as login: it verifies a password, so
+    leaving it open would hand an attacker with a leaked token an unmetered
+    oracle for the real one.
+    """
+    client_ip = request.client.host if request.client else "unknown"
+    if not rate_limit.check_and_record(client_ip, f"password-change:{current_user.email}"):
+        raise HTTPException(status_code=429, detail="too_many_attempts")
+
+    if not verify_password(payload.current_password, current_user.password_hash):
+        raise HTTPException(status_code=401, detail="invalid_credentials")
+
+    rate_limit.clear(client_ip, f"password-change:{current_user.email}")
+
+    current_user.password_hash = hash_password(payload.new_password)
+
+    await audit_record(
+        db,
+        actor_user_id=current_user.id,
+        action="user.password_change",
+        resource_type="user",
+        resource_id=current_user.id,
+        payload={},
+    )
+    await db.commit()
+
+    # Existing tokens stay valid: they carry a user id and an expiry, nothing
+    # derived from the password, and this slice has no revocation list to add
+    # them to. Worth knowing before treating a password change as a way to
+    # evict a session.
+    return None

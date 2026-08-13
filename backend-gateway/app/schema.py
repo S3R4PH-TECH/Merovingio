@@ -16,38 +16,51 @@ class LoginRequest(BaseModel):
     password: str
 
 
-class RegisterRequest(BaseModel):
-    """Signup payload.
+def validate_password(value: str) -> str:
+    """The password rules, shared by signup and by a password change.
 
-    The password rules live here rather than in the router so a malformed
-    request is rejected by FastAPI as a 422 before any database work happens.
-    `max_length=72` is not arbitrary: bcrypt silently truncates past 72 bytes,
-    so accepting more would let a user believe characters count when they do
-    not.
+    They live in the schema rather than in a router so a malformed request is
+    rejected by FastAPI as a 422 before any database work happens. `72` is not
+    arbitrary: bcrypt silently truncates past 72 bytes, so accepting more would
+    let a user believe characters count when they do not.
+
+    There is deliberately no minimum length — the 12-character floor was
+    dropped on request. One letter, one digit and the bcrypt ceiling are what
+    remain, and both entry points enforce exactly the same set, so a password
+    that can be chosen can also be changed to.
     """
+    if not any(char.isdigit() for char in value):
+        raise ValueError("password must contain at least one digit")
+    if not any(char.isalpha() for char in value):
+        raise ValueError("password must contain at least one letter")
+    if len(value.encode("utf-8")) > 72:
+        raise ValueError("password must be at most 72 bytes")
+    return value
+
+
+def validate_name(value: str) -> str:
+    trimmed = value.strip()
+    if trimmed == "":
+        raise ValueError("name must not be blank")
+    return trimmed
+
+
+class RegisterRequest(BaseModel):
+    """Signup payload."""
 
     email: EmailStr
-    password: str = Field(min_length=12, max_length=72)
+    password: str = Field(min_length=1, max_length=72)
     name: str = Field(min_length=1, max_length=200)
 
     @field_validator("password")
     @classmethod
     def _password_is_mixed(cls, value: str) -> str:
-        if not any(char.isdigit() for char in value):
-            raise ValueError("password must contain at least one digit")
-        if not any(char.isalpha() for char in value):
-            raise ValueError("password must contain at least one letter")
-        if len(value.encode("utf-8")) > 72:
-            raise ValueError("password must be at most 72 bytes")
-        return value
+        return validate_password(value)
 
     @field_validator("name")
     @classmethod
     def _name_is_not_blank(cls, value: str) -> str:
-        trimmed = value.strip()
-        if trimmed == "":
-            raise ValueError("name must not be blank")
-        return trimmed
+        return validate_name(value)
 
 
 class TokenResponse(BaseModel):
@@ -59,6 +72,67 @@ class MeResponse(BaseModel):
     id: UUID
     email: str
     name: str
+    avatar_url: Optional[str] = None
+
+
+# A data URI is how a profile photo gets picked from disk without an upload
+# endpoint (see models.User.avatar_url). The ceiling is on the encoded string:
+# base64 costs a third on top, so this is roughly a 380 KB image — far more
+# than the 256x256 thumbnail the profile screen actually sends, and small
+# enough that no single row can be used to bloat the table.
+AVATAR_MAX_CHARS = 512 * 1024
+
+
+class ProfileUpdateRequest(BaseModel):
+    """PATCH /me. Every field is optional; omitting one leaves it untouched.
+
+    Email is absent on purpose: it is the login identity and the uniqueness key,
+    so changing it is an account operation rather than a profile edit.
+    """
+
+    name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    avatar_url: Optional[str] = Field(default=None, max_length=AVATAR_MAX_CHARS)
+
+    @field_validator("name")
+    @classmethod
+    def _name_is_not_blank(cls, value: Optional[str]) -> Optional[str]:
+        return None if value is None else validate_name(value)
+
+    @field_validator("avatar_url")
+    @classmethod
+    def _avatar_is_a_safe_url(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+
+        trimmed = value.strip()
+        # An empty string is how the UI says "remove my photo" — PATCH cannot
+        # express that with an omitted field, since omission means "unchanged".
+        if trimmed == "":
+            return ""
+
+        allowed = ("https://", "http://", "data:image/")
+        if not trimmed.startswith(allowed):
+            # Rejects javascript:, vbscript: and data URIs of any other media
+            # type. This value goes straight into an <img src> in the SPA.
+            raise ValueError("avatar_url must be an http(s) URL or a data:image/ URI")
+        return trimmed
+
+
+class PasswordChangeRequest(BaseModel):
+    """POST /me/password.
+
+    The current password is required even though the caller already holds a
+    valid JWT: a stolen token should not be enough to lock the real owner out
+    of their own account.
+    """
+
+    current_password: str = Field(min_length=1)
+    new_password: str = Field(min_length=1, max_length=72)
+
+    @field_validator("new_password")
+    @classmethod
+    def _new_password_is_mixed(cls, value: str) -> str:
+        return validate_password(value)
 
 
 class WorkspaceCreate(BaseModel):
@@ -194,6 +268,8 @@ class RunResponse(BaseModel):
     started_at: datetime
     finished_at: Optional[datetime]
     params: dict
+    error: Optional[str] = None
+    error_node: Optional[str] = None
     tool_execution_jobs: List[ToolExecutionJobResponse] = Field(default_factory=list)
     assets: List[AssetResponse] = Field(default_factory=list)
 
@@ -258,7 +334,33 @@ class ToolExecutionEnvelope(BaseModel):
 class N8nCallbackRequest(BaseModel):
     run_id: UUID
     execution_id: Optional[str] = None
-    status: Literal["success", "error"]
+    # The shipped workflows speak a wider vocabulary than this field used to
+    # accept, and the mismatch was silent in the worst possible direction:
+    #
+    #   * both Error Workflow nodes post "failed" (workflows/*.json), and
+    #   * nmap-ffuf-theharvester's success node posts "completed".
+    #
+    # Literal["success", "error"] rejected all three with a 422, so an
+    # execution could abort inside n8n and leave its Run stuck in "running"
+    # forever, with the message n8n had already sent thrown away by the
+    # validator. Normalising the dialect here rather than only fixing
+    # workflows/*.json is deliberate: those files are exports, and the
+    # workflows actually running are the ones activated inside n8n, which no
+    # change to this repository can reach.
+    status: Literal["success", "completed", "done", "error", "failed"]
+    # Filled in by the workflow's Error Workflow, which in n8n has
+    # `$json.execution.error.message` and `$json.execution.error.node.name`
+    # available to it. Both optional so the two-field callback every existing
+    # workflow already sends keeps validating unchanged — a failure with no
+    # message is still a failure worth recording.
+    error: Optional[str] = None
+    error_node: Optional[str] = None
+
+    @property
+    def failed(self) -> bool:
+        """One question the reconciliation actually asks, so no caller has to
+        remember which spellings mean failure."""
+        return self.status in ("error", "failed")
 
 
 # --- TES Registry Admin ---

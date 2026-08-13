@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { RegisterScreen, checkPasswordRules } from '../components/RegisterScreen';
+import { RegisterScreen } from '../components/RegisterScreen';
+import { checkPasswordRules } from '../lib/password';
 
 function renderScreen(props: Partial<React.ComponentProps<typeof RegisterScreen>> = {}) {
   const onRegister = vi.fn().mockResolvedValue(undefined);
@@ -27,34 +28,31 @@ async function fillValid(user: ReturnType<typeof userEvent.setup>) {
 describe('checkPasswordRules', () => {
   it('mirrors the gateway policy', () => {
     const labels = checkPasswordRules('').map(rule => rule.label);
-    expect(labels).toEqual([
-      'At least 12 characters',
-      'Contains a letter',
-      'Contains a digit',
-      'At most 72 bytes',
-    ]);
+    expect(labels).toEqual(['Contains a letter', 'Contains a digit', 'At most 72 bytes']);
   });
 
   it('accepts a compliant password', () => {
     expect(checkPasswordRules('CorrectHorse42!').every(rule => rule.met)).toBe(true);
   });
 
-  it('rejects one that is too short', () => {
-    expect(checkPasswordRules('Short1!')[0].met).toBe(false);
+  it('no longer imposes a minimum length', () => {
+    // The gateway dropped its 12-character floor, so a short password that
+    // still mixes a letter and a digit is compliant.
+    expect(checkPasswordRules('Short1!').every(rule => rule.met)).toBe(true);
   });
 
   it('rejects one with no digit', () => {
-    expect(checkPasswordRules('nodigitsatallhere')[2].met).toBe(false);
+    expect(checkPasswordRules('nodigitsatallhere')[1].met).toBe(false);
   });
 
   it('rejects one with no letter', () => {
-    expect(checkPasswordRules('1234567890123456')[1].met).toBe(false);
+    expect(checkPasswordRules('1234567890123456')[0].met).toBe(false);
   });
 
   it('counts bytes, not characters, for the bcrypt ceiling', () => {
     // Multi-byte characters hit bcrypt's 72-byte limit well before 72 glyphs.
     const emoji = `a1${'🔒'.repeat(20)}`;
-    expect(checkPasswordRules(emoji)[3].met).toBe(false);
+    expect(checkPasswordRules(emoji)[2].met).toBe(false);
   });
 });
 
@@ -75,15 +73,20 @@ describe('RegisterScreen', () => {
 
   it('shows the password rules before anything is typed', () => {
     renderScreen();
-    expect(screen.getByText('At least 12 characters')).toBeInTheDocument();
+    expect(screen.getByText('Contains a letter')).toBeInTheDocument();
     expect(screen.getByText('Contains a digit')).toBeInTheDocument();
+  });
+
+  it('never advertises a minimum length', () => {
+    renderScreen();
+    expect(screen.queryByText(/at least \d+ characters/i)).not.toBeInTheDocument();
   });
 
   it('ticks the rules live as the user types', async () => {
     const user = userEvent.setup();
     renderScreen();
 
-    const rule = screen.getByText('At least 12 characters').closest('li');
+    const rule = screen.getByText('Contains a digit').closest('li');
     expect(rule).toHaveAttribute('data-met', 'false');
 
     await user.type(screen.getByLabelText(/^password$/i), 'CorrectHorse42!');
@@ -128,7 +131,8 @@ describe('RegisterScreen', () => {
 
     await user.type(screen.getByLabelText(/name/i), 'New Operator');
     await user.type(screen.getByLabelText(/email/i), 'new@example.com');
-    await user.type(screen.getByLabelText(/^password$/i), 'short1');
+    // No digit — the one composition rule left that a plain word breaks.
+    await user.type(screen.getByLabelText(/^password$/i), 'nodigitshere');
     await user.click(screen.getByRole('button', { name: /^create account$/i }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/does not meet every requirement/i);

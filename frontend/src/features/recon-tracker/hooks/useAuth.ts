@@ -5,6 +5,7 @@ import {
   login as apiLogin,
   logout as apiLogout,
   register as apiRegister,
+  updateProfile as apiUpdateProfile,
 } from '../api/gateway';
 import type { MeResponse } from '../types';
 
@@ -17,6 +18,8 @@ interface UseAuth {
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string, name: string) => Promise<void>;
   signOut: () => void;
+  /** Writes the profile through and keeps `user` in step with the response. */
+  updateProfile: (patch: { name?: string; avatar_url?: string }) => Promise<MeResponse>;
 }
 
 export function useAuth(): UseAuth {
@@ -99,5 +102,18 @@ export function useAuth(): UseAuth {
     setState('anonymous');
   }, []);
 
-  return { state, user, error, signIn, signUp, signOut };
+  // The gateway's response is what lands in state, not the patch that was
+  // sent: the server trims the name and normalises a cleared avatar to null,
+  // so echoing the request back would leave the sidebar showing something the
+  // database does not hold.
+  const updateProfile = useCallback(
+    async (patch: { name?: string; avatar_url?: string }) => {
+      const me = await apiUpdateProfile(patch);
+      setUser(me);
+      return me;
+    },
+    [],
+  );
+
+  return { state, user, error, signIn, signUp, signOut, updateProfile };
 }

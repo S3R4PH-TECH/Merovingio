@@ -205,7 +205,7 @@
           "genericAuthType": "httpHeaderAuth",
           "sendBody": true,
           "specifyBody": "json",
-          "jsonBody": "={{ { \"run_id\": $node[\"Webhook\"].json.body.run_id, \"execution_id\": $execution.id, \"status\": \"completed\" } }}",
+          "jsonBody": "={{ { \"run_id\": $node[\"Webhook\"].json.body.run_id, \"execution_id\": $execution.id, \"status\": \"success\" } }}",
           "options": {}
         },
         "id": "n8n-callback-success",
@@ -231,7 +231,7 @@
           "genericAuthType": "httpHeaderAuth",
           "sendBody": true,
           "specifyBody": "json",
-          "jsonBody": "={{ { \"run_id\": $json.execution.variables.run_id ?? \"\", \"execution_id\": $json.execution.id, \"status\": \"failed\", \"error\": $json.error.message } }}",
+          "jsonBody": "={{ { \"run_id\": $json.execution.variables.run_id ?? \"\", \"execution_id\": $json.execution.id, \"status\": \"error\", \"error\": $json.error.message, \"error_node\": $json.execution.lastNodeExecuted } }}",
           "options": {}
         },
         "id": "n8n-callback-error",

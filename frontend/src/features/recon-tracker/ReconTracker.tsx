@@ -5,13 +5,14 @@ import { Header } from './components/Header';
 import { LoginScreen } from './components/LoginScreen';
 import { RegisterScreen } from './components/RegisterScreen';
 import { NewRunModal, type DispatchInput } from './components/NewRunModal';
+import { ScopePanel } from './components/ScopePanel';
 import { DemoModeToast } from './components/DemoModeToast';
 import { OverviewScreen } from './screens/OverviewScreen';
 import { RunsScreen } from './screens/RunsScreen';
 import { RunDetailScreen } from './screens/RunDetailScreen';
-import { ScopeScreen } from './screens/ScopeScreen';
 import { TesScreen } from './screens/TesScreen';
-import { FindingsScreen } from './screens/FindingsScreen';
+import { DebugN8nScreen } from './screens/DebugN8nScreen';
+import { ProfileScreen } from './screens/ProfileScreen';
 import { useHashRoute } from './lib/useHashRoute';
 import { useTheme } from './hooks/useTheme';
 import { useAuth } from './hooks/useAuth';
@@ -46,7 +47,15 @@ export function ReconTracker({ now }: ReconTrackerProps) {
 
   const { route, navigate } = useHashRoute();
   const { theme, toggleTheme } = useTheme();
-  const { state: authState, user, error: authError, signIn, signUp, signOut } = useAuth();
+  const {
+    state: authState,
+    user,
+    error: authError,
+    signIn,
+    signUp,
+    signOut,
+    updateProfile,
+  } = useAuth();
   const [showRegister, setShowRegister] = useState(false);
 
   const [runs, setRuns] = useState<RunRecord[]>([]);
@@ -64,6 +73,8 @@ export function ReconTracker({ now }: ReconTrackerProps) {
     period: '7d',
     tool: 'all',
     status: 'all',
+    // The header's program picker was removed; selectors still honour this
+    // field, so it stays pinned open rather than silently hiding runs.
     program: 'all',
   });
 
@@ -182,6 +193,7 @@ export function ReconTracker({ now }: ReconTrackerProps) {
         onNavigate={navigate}
         onSignOut={signOut}
         userName={user?.name ?? 'Operator'}
+        avatarUrl={user?.avatar_url ?? null}
       />
 
       <div className="rt-content">
@@ -189,16 +201,9 @@ export function ReconTracker({ now }: ReconTrackerProps) {
           sidebarCollapsed={collapsed}
           theme={theme}
           role={role}
-          program={filters.program === 'all' ? 'All Programs' : filters.program}
           onToggleSidebar={() => setCollapsed(current => !current)}
           onToggleTheme={toggleTheme}
           onRoleChange={setRole}
-          onProgramChange={program =>
-            setFilters(current => ({
-              ...current,
-              program: program === 'All Programs' ? 'all' : program,
-            }))
-          }
         />
 
         <main className="rt-main" id="rt-main" tabIndex={-1}>
@@ -236,12 +241,15 @@ export function ReconTracker({ now }: ReconTrackerProps) {
             ) : (
               <RunsScreen
                 title="All Runs"
-                subtitle="Every execution the gateway has recorded"
+                subtitle="Every execution the gateway has recorded, and the scope it may run against"
                 runs={visible}
                 loading={loading}
                 error={error}
                 onOpenRun={runId => navigate('runs', runId)}
                 onNewRun={() => setModalOpen(true)}
+                // reload() refetches targets alongside runs, so a target
+                // created here immediately reaches the New Run modal too.
+                aside={<ScopePanel targets={targets} onChanged={reload} />}
               />
             ))}
 
@@ -257,9 +265,15 @@ export function ReconTracker({ now }: ReconTrackerProps) {
             />
           )}
 
-          {route.key === 'scope' && <ScopeScreen />}
           {route.key === 'tes' && <TesScreen />}
-          {route.key === 'findings' && <FindingsScreen />}
+          {route.key === 'debug' && <DebugN8nScreen />}
+
+          {/* `user` is non-null for every authenticated render — the shell
+              returns the login screen otherwise — but the route is reachable
+              by hash, so the guard stays rather than a non-null assertion. */}
+          {route.key === 'profile' && user && (
+            <ProfileScreen user={user} onUpdateProfile={updateProfile} />
+          )}
         </main>
       </div>
 

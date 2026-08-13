@@ -279,6 +279,11 @@ async def test_downgrade_is_reversible(empty_database: None) -> None:
         # Same class of drift, one revision earlier (52bfe257d3f4) — included so
         # the pin covers more than a single incident.
         ("tes_registry", "static_token"),
+        # b7e21a4c9d15. routers/internal.py n8n_callback() and
+        # routers/workflows.py trigger_run() both write these, and the Debug
+        # n8n screen renders nothing useful without them.
+        ("runs", "error"),
+        ("runs", "error_node"),
     ],
 )
 async def test_columns_the_app_reads_survive_a_migration_only_bootstrap(
